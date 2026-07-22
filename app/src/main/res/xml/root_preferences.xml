@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <EditTextPreference
+        app:key="@string/pref_url_key"
+        app:title="@string/pref_url_title"
+        app:defaultValue="@string/default_rtsp_url"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <!-- non-clickable note under the URL field -->
+    <Preference
+        app:summary="@string/pref_url_note"
+        app:selectable="false"
+        app:iconSpaceReserved="false" />
+
+</PreferenceScreen>

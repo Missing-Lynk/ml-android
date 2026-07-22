@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- MissingLynk dark theme: a video viewer, so dark surfaces + a teal accent -->
+    <color name="ml_primary">#22D3C5</color>
+    <color name="ml_on_primary">#00332E</color>
+    <color name="ml_background">#0E1416</color>
+    <color name="ml_surface">#16201F</color>
+    <color name="ml_surface_variant">#1F2A29</color>
+    <color name="ml_on_surface">#E2E6E5</color>
+    <color name="ml_on_surface_variant">#A8B3B1</color>
+</resources>

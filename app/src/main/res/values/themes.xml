@@ -1,0 +1,17 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Always-dark theme (this is a video viewer). -->
+    <style name="Base.Theme.MissingLynk" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/ml_primary</item>
+        <item name="colorOnPrimary">@color/ml_on_primary</item>
+        <item name="colorSecondary">@color/ml_primary</item>
+        <item name="colorOnSecondary">@color/ml_on_primary</item>
+        <item name="android:colorBackground">@color/ml_background</item>
+        <item name="colorSurface">@color/ml_surface</item>
+        <item name="colorSurfaceContainer">@color/ml_surface_variant</item>
+        <item name="colorOnSurface">@color/ml_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/ml_on_surface_variant</item>
+        <item name="android:statusBarColor">@color/ml_background</item>
+    </style>
+
+    <style name="Theme.MissingLynk" parent="Base.Theme.MissingLynk" />
+</resources>
