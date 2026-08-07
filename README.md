@@ -33,3 +33,9 @@ States: waiting for the goggle (no matching network or RTSP not up yet), playing
    ```
 
 The native player (`app/src/main/jni/gstplayer.c`) is built by ndk-build against the GStreamer prebuilts; only `arm64-v8a` is shipped to keep the static-plugin payload sane.
+
+## Support
+
+Everything here is free and open. The work behind it is unpaid nights and weekends: reverse engineering, bricked and recovered hardware, and a lot of time on a serial console. If it saved you some of your own, you can [buy me a coffee](https://buymeacoffee.com/stylesuxx).
+
+Not bought the hardware yet? The [project README](https://github.com/Missing-Lynk/MissingLynk#support-this-project) has affiliate links that support the work at no extra cost to you.
