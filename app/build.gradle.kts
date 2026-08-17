@@ -14,7 +14,7 @@ val localProps = Properties().apply {
 val gstDir: String = localProps.getProperty("gst.dir") ?: "/home/chris/android-gst"
 
 android {
-    namespace = "com.brushlesswhoop.missinglynk"
+    namespace = "at.websium.ml"
     compileSdk {
         version = release(36)
     }

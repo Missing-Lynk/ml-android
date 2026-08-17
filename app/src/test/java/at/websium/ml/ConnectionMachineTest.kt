@@ -1,8 +1,8 @@
-package com.brushlesswhoop.missinglynk
+package at.websium.ml
 
-import com.brushlesswhoop.missinglynk.ConnectionMachine.Effect
-import com.brushlesswhoop.missinglynk.ConnectionMachine.State
-import com.brushlesswhoop.missinglynk.ConnectionMachine.Tick
+import at.websium.ml.ConnectionMachine.Effect
+import at.websium.ml.ConnectionMachine.State
+import at.websium.ml.ConnectionMachine.Tick
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

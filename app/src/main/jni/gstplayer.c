@@ -405,7 +405,7 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
         LOGE("could not retrieve JNIEnv");
         return 0;
     }
-    jclass klass = (*env)->FindClass(env, "com/brushlesswhoop/missinglynk/GStreamerPlayer");
+    jclass klass = (*env)->FindClass(env, "at/websium/ml/GStreamerPlayer");
     (*env)->RegisterNatives(env, klass, native_methods, G_N_ELEMENTS(native_methods));
     pthread_key_create(&current_jni_env, detach_current_thread);
     return JNI_VERSION_1_4;

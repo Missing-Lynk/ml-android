@@ -1,4 +1,4 @@
-package com.brushlesswhoop.missinglynk
+package at.websium.ml
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity

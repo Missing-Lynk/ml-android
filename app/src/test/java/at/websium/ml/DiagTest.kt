@@ -1,4 +1,4 @@
-package com.brushlesswhoop.missinglynk
+package at.websium.ml
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull

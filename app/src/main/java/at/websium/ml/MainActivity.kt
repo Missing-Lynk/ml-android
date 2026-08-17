@@ -1,4 +1,4 @@
-package com.brushlesswhoop.missinglynk
+package at.websium.ml
 
 import android.content.Intent
 import android.content.pm.ActivityInfo
