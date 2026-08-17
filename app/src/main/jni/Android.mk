@@ -30,6 +30,13 @@ GSTREAMER_PLUGINS := coreelements videoconvertscale opengl androidmedia \
                      rtsp rtp rtpmanager udp tcp videoparsersbad libav playback
 GSTREAMER_EXTRA_DEPS := gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-rtp-1.0
 
+# Both default to yes in gstreamer-1.0.mk, which copies a 348 KB font and a 220 KB CA bundle
+# into src/main/assets on every build and uncomments the matching copy calls in the generated
+# GStreamer.java. Nothing in this pipeline uses either: no plugin above needs pango, and rtsp://
+# needs no TLS database. Off, so the assets are neither generated nor packaged.
+GSTREAMER_INCLUDE_FONTS := no
+GSTREAMER_INCLUDE_CA_CERTIFICATES := no
+
 include $(GSTREAMER_NDK_BUILD_PATH)/gstreamer-1.0.mk
 
 include $(CLEAR_VARS)

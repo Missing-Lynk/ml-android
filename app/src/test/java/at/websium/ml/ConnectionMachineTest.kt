@@ -314,6 +314,72 @@ class ConnectionMachineTest {
         assertEquals(State.PLAYING, tick(15000, frames = 7).state)
     }
 
+    // ---- the player cannot be built ----
+
+    @Test
+    fun anUnbuildablePlayerStopsAtUnavailable() {
+        autoConnect()
+        val step = m.onPlayerUnavailable("dlopen failed: libgstreamer_android.so not found")
+        assertEquals(State.UNAVAILABLE, step.state)
+        assertEquals(
+            listOf(Effect.Log("player", "unavailable: dlopen failed: libgstreamer_android.so not found")),
+            step.effects,
+        )
+    }
+
+    @Test
+    fun anUnknownFailureStillLogsSomething() {
+        assertEquals(
+            listOf(Effect.Log("player", "unavailable: unknown")),
+            m.onPlayerUnavailable(null).effects,
+        )
+    }
+
+    @Test
+    fun unavailableIsTerminalAcrossTicks() {
+        autoConnect()
+        m.onPlayerUnavailable("no decoder")
+        for (t in listOf(1000L, 5000L, 30000L)) {
+            val step = tick(t, frames = 0)
+            assertEquals(State.UNAVAILABLE, step.state)
+            assertTrue("must not retry at t=$t", step.effects.isEmpty())
+        }
+    }
+
+    @Test
+    fun unavailableSurvivesTheGoggleComingAndGoing() {
+        // replugging cannot fix a native library that failed to load, so it must not look like
+        // it is searching again
+        autoConnect()
+        m.onPlayerUnavailable("no decoder")
+        assertEquals(State.UNAVAILABLE, tick(1000, hasNetwork = false).state)
+        assertEquals(State.UNAVAILABLE, tick(2000, hasNetwork = true).state)
+    }
+
+    @Test
+    fun unavailableIgnoresTheConnectTapAndDisconnect() {
+        m.onPlayerUnavailable("no decoder")
+        assertEquals(State.UNAVAILABLE, m.onConnectTapped(1000).state)
+        assertTrue(m.onConnectTapped(1000).effects.isEmpty())
+        assertEquals(State.UNAVAILABLE, m.onDisconnect(hasNetwork = true, nowMs = 1000).state)
+        assertTrue(m.onDisconnect(hasNetwork = true, nowMs = 1000).effects.isEmpty())
+    }
+
+    @Test
+    fun unavailableIgnoresAnOutstandingProbe() {
+        // a probe issued before the failure can answer after it
+        tick(0)
+        m.onPlayerUnavailable("no decoder")
+        assertEquals(State.UNAVAILABLE, m.onProbeResult(true, 500).state)
+        assertEquals(State.UNAVAILABLE, m.onSessionProbeResult(false, 0, 500).state)
+    }
+
+    @Test
+    fun unavailableIsNotASessionState() {
+        // it must not enable the back handler or the session probe
+        assertFalse(State.UNAVAILABLE in ConnectionMachine.SESSION_STATES)
+    }
+
     // ---- invariants ----
 
     @Test

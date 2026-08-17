@@ -2,8 +2,6 @@
     <string name="app_name">MissingLynk</string>
 
     <string name="connect">Connect</string>
-    <string name="nav_open">Open menu</string>
-    <string name="nav_close">Close menu</string>
     <string name="menu_settings">Settings</string>
     <string name="settings_title">Settings</string>
     <string name="menu_about">About</string>
@@ -22,6 +20,7 @@
     <string name="state_connecting">Connecting…</string>
     <string name="state_no_quad">No video, turn on your quad</string>
     <string name="state_reconnecting">Stay tuned, reconnecting…</string>
+    <string name="state_unavailable">Video cannot start on this phone. See Diagnostics in the menu for details.</string>
     <string name="stay_tuned_image">Reconnecting</string>
     <string name="searching_hint">First time? Open the menu (top right), About for goggle setup.</string>
 

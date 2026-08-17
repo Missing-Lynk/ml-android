@@ -15,6 +15,7 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -47,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fullscreenBack: ImageButton
 
     private var player: StreamPlayer? = null
+    private var lastPlayerFailure: String? = null
     private lateinit var link: GoggleLink
 
     private val machine = ConnectionMachine()
@@ -71,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         link = GoggleLink(this)
-        Diag.init(this)
 
         toolbar = findViewById(R.id.toolbar)
         videoContainer = findViewById(R.id.video_container)
@@ -177,10 +178,14 @@ class MainActivity : AppCompatActivity() {
 
     /** carry out the machine's effects, then bring the views up to date */
     private fun apply(step: ConnectionMachine.Step) {
+        var playerFailure: String? = null
         step.effects.forEach { effect ->
             when (effect) {
                 is ConnectionMachine.Effect.Log -> Diag.log(effect.tag, effect.msg)
-                ConnectionMachine.Effect.CreatePlayer -> ensurePlayer()
+                ConnectionMachine.Effect.CreatePlayer ->
+                    if (playerFailure == null && ensurePlayer() == null) {
+                        playerFailure = lastPlayerFailure
+                    }
                 ConnectionMachine.Effect.TeardownPlayer -> teardownPlayer()
                 ConnectionMachine.Effect.StartStream -> player?.play(link.streamUrl())
                 ConnectionMachine.Effect.Probe ->
@@ -190,6 +195,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        // a player that cannot be built supersedes whatever state this step reached
+        playerFailure?.let { return apply(machine.onPlayerUnavailable(it)) }
         if (step.state != rendered) render(step.state)
     }
 
@@ -197,12 +204,22 @@ class MainActivity : AppCompatActivity() {
 
     // ---- player ----
 
-    private fun ensurePlayer(): StreamPlayer {
+    /** null when the player cannot be built here; [lastPlayerFailure] then says why */
+    private fun ensurePlayer(): StreamPlayer? {
         player?.let { return it }
-        return GStreamerPlayer(this).also {
-            it.attachTo(videoContainer)
-            it.onState = { s -> runOnUiThread { machine.onPlayerState(s) } }
-            player = it
+        return try {
+            GStreamerPlayer(this).also {
+                it.attachTo(videoContainer)
+                it.onState = { s -> runOnUiThread { machine.onPlayerState(s) } }
+                player = it
+            }
+        } catch (t: Throwable) {
+            // Throwable, not Exception: GStreamer.init declares a checked Exception, but the
+            // companion's System.loadLibrary raises UnsatisfiedLinkError, which arrives here
+            // wrapped in ExceptionInInitializerError. Both are unrecoverable and neither
+            // should reach the default handler as a crash.
+            lastPlayerFailure = t.message ?: t.javaClass.simpleName
+            null
         }
     }
 
@@ -225,14 +242,16 @@ class MainActivity : AppCompatActivity() {
         statusPanel.visibility = if (playing) View.GONE else View.VISIBLE
 
         progress.visibility = when (state) {
-            ConnectionMachine.State.READY, ConnectionMachine.State.PLAYING -> View.GONE
+            ConnectionMachine.State.READY,
+            ConnectionMachine.State.PLAYING,
+            ConnectionMachine.State.UNAVAILABLE -> View.GONE
             else -> View.VISIBLE
         }
         connectButton.visibility =
             if (state == ConnectionMachine.State.READY) View.VISIBLE else View.GONE
         statusImage.visibility =
             if (state == ConnectionMachine.State.RECONNECTING) View.VISIBLE else View.GONE
-        statusText.text = statusTextFor(state)
+        statusTextFor(state)?.let { statusText.text = getString(it) }
         // setup hint only while there's no goggle/stream yet
         statusHint.visibility = if (
             state == ConnectionMachine.State.SEARCHING || state == ConnectionMachine.State.STREAM_DOWN
@@ -261,17 +280,18 @@ class MainActivity : AppCompatActivity() {
         ticker.postDelayed(hideFullscreenBack, CONTROLS_TIMEOUT_MS)
     }
 
-    private fun statusTextFor(s: ConnectionMachine.State): CharSequence = getString(
-        when (s) {
-            ConnectionMachine.State.SEARCHING -> R.string.state_searching
-            ConnectionMachine.State.STREAM_DOWN -> R.string.state_stream_down
-            ConnectionMachine.State.READY -> R.string.state_ready
-            ConnectionMachine.State.CONNECTING -> R.string.state_connecting
-            ConnectionMachine.State.NO_QUAD -> R.string.state_no_quad
-            ConnectionMachine.State.RECONNECTING -> R.string.state_reconnecting
-            ConnectionMachine.State.PLAYING -> R.string.app_name
-        }
-    )
+    /** null while playing: the status panel is hidden then, so there is no copy to show */
+    @StringRes
+    private fun statusTextFor(s: ConnectionMachine.State): Int? = when (s) {
+        ConnectionMachine.State.SEARCHING -> R.string.state_searching
+        ConnectionMachine.State.STREAM_DOWN -> R.string.state_stream_down
+        ConnectionMachine.State.READY -> R.string.state_ready
+        ConnectionMachine.State.CONNECTING -> R.string.state_connecting
+        ConnectionMachine.State.NO_QUAD -> R.string.state_no_quad
+        ConnectionMachine.State.RECONNECTING -> R.string.state_reconnecting
+        ConnectionMachine.State.UNAVAILABLE -> R.string.state_unavailable
+        ConnectionMachine.State.PLAYING -> null
+    }
 
     private fun setSystemBarsVisible(visible: Boolean) {
         val controller = WindowInsetsControllerCompat(window, window.decorView)

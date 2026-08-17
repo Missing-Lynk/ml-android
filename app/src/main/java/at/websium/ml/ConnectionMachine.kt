@@ -16,7 +16,13 @@ package at.websium.ml
  */
 class ConnectionMachine {
 
-    enum class State { SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_QUAD, PLAYING, RECONNECTING }
+    enum class State {
+        SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_QUAD, PLAYING, RECONNECTING,
+
+        /** The player could not be built on this device. Terminal for the process: a native
+         *  library that failed to load will not load on a later attempt. */
+        UNAVAILABLE,
+    }
 
     sealed interface Effect {
         /** Start an RTSP port probe; answer through [onProbeResult]. */
@@ -62,6 +68,8 @@ class ConnectionMachine {
     private var lastSessionProbeMs = 0L
 
     fun onTick(t: Tick): Step {
+        if (state == State.UNAVAILABLE) return Step(state)
+
         if (!t.hasNetwork) {
             userDisconnected = false
             return if (state == State.SEARCHING) {
@@ -76,6 +84,7 @@ class ConnectionMachine {
             State.READY -> Step(state)  // waiting for the Connect tap
             State.CONNECTING, State.NO_QUAD, State.RECONNECTING -> stepConnecting(t)
             State.PLAYING -> stepPlaying(t)
+            State.UNAVAILABLE -> Step(state)  // returned above, before the network check
         }
     }
 
@@ -103,9 +112,21 @@ class ConnectionMachine {
         )
     }
 
-    fun onConnectTapped(nowMs: Long): Step = connect(nowMs)
+    fun onConnectTapped(nowMs: Long): Step =
+        if (state == State.UNAVAILABLE) Step(state) else connect(nowMs)
+
+    /**
+     * The player could not be constructed: GStreamer failed to initialise, or its native
+     * libraries are missing for this device's ABI. Nothing the app does later changes that,
+     * so it stops here with something on screen instead of crashing out of [Effect.CreatePlayer].
+     */
+    fun onPlayerUnavailable(detail: String?): Step {
+        state = State.UNAVAILABLE
+        return Step(state, listOf(Effect.Log("player", "unavailable: ${detail ?: "unknown"}")))
+    }
 
     fun onDisconnect(hasNetwork: Boolean, nowMs: Long): Step {
+        if (state == State.UNAVAILABLE) return Step(state)
         userDisconnected = hasNetwork
         state = if (hasNetwork) State.READY else State.SEARCHING
         return Step(state, listOf(Effect.TeardownPlayer))

@@ -11,3 +11,15 @@ local.properties
 
 # native libs built by the buildNativeLibs ndk-build task (GStreamer + our JNI)
 /app/src/main/jniLibs/
+
+# gstreamer_android.c is generated per build; ndk-build writes it under build/ndk
+/app/gst-android-build/
+
+# gstreamer-1.0.mk stages fonts/CA certificates here when GSTREAMER_INCLUDE_* are on (jni/Android.mk
+# turns them off, so this only catches a build that re-enables them)
+/app/src/main/assets/
+
+# gstreamer-1.0.mk's copyjavasource target regenerates the SDK's Java helpers here every build.
+# Not a sourceSet, so nothing compiles it; the copy the app actually uses is committed under
+# src/main/java/org/freedesktop/gstreamer/.
+/app/src/org/
