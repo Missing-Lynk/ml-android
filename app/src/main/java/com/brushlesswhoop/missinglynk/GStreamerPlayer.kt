@@ -70,13 +70,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
 
     /** Invoked from the native GStreamer thread; MainActivity marshals onState to the UI. */
     private fun onNativeState(state: Int) {
-        val mapped = when (state) {
-            0 -> PlayerState.CONNECTING
-            1 -> PlayerState.PLAYING
-            2 -> PlayerState.ERROR
-            else -> PlayerState.ENDED
-        }
-        onState?.invoke(mapped)
+        onState?.invoke(PlayerState.fromNative(state))
     }
 
     override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {

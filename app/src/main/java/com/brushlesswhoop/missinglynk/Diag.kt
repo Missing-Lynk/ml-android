@@ -14,13 +14,17 @@ import java.util.Locale
  */
 object Diag {
 
-    private const val MAX_BYTES = 256 * 1024L
+    internal const val MAX_BYTES = 256 * 1024L
     private val stamp = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
 
     @Volatile private var file: File? = null
 
-    fun init(context: Context) {
-        file = File(context.getExternalFilesDir(null), "diag.log")
+    fun init(context: Context) = init(File(context.getExternalFilesDir(null), "diag.log"))
+
+    /** Context-free entry point, so the log's own behaviour (append, trim, read, clear) is
+     *  exercisable without an Android framework. */
+    internal fun init(logFile: File) {
+        file = logFile
         log("app", "----- launched -----")
     }
 
@@ -48,4 +52,10 @@ object Diag {
     }
 
     fun file(): File? = file
+
+    /** Return to the pre-init state. Exists so tests can exercise the uninitialised path,
+     *  which is the one a screen reached after process death actually hits. */
+    internal fun reset() {
+        file = null
+    }
 }

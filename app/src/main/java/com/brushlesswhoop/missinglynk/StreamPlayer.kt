@@ -2,7 +2,21 @@ package com.brushlesswhoop.missinglynk
 
 import android.view.ViewGroup
 
-enum class PlayerState { CONNECTING, PLAYING, ERROR, ENDED }
+enum class PlayerState {
+    CONNECTING, PLAYING, ERROR, ENDED;
+
+    companion object {
+        /** Map a native state code to a state. The codes are the `ST_*` defines in
+         *  jni/gstplayer.c and the mapping is a hand-maintained contract with that file;
+         *  anything unrecognised is treated as the stream having ended. */
+        fun fromNative(code: Int): PlayerState = when (code) {
+            0 -> CONNECTING
+            1 -> PLAYING
+            2 -> ERROR
+            else -> ENDED
+        }
+    }
+}
 
 /**
  * Thin player abstraction (GStreamer backs it; the interface keeps the Activity decoupled).

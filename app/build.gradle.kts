@@ -49,6 +49,12 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    testOptions {
+        unitTests.all {
+            // surface which test failed without opening the HTML report
+            it.testLogging { events("passed", "skipped", "failed") }
+        }
+    }
 }
 
 // Build the GStreamer JNI lib via ndk-build and stage the .so's (plus libc++_shared.so)
@@ -108,4 +114,9 @@ dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.preference)
+
+    // JVM unit tests only. Everything under src/test is pure Kotlin against logic with no
+    // Android framework dependency, so no Robolectric and no device is needed; `gradlew test`
+    // runs the whole suite in a couple of seconds.
+    testImplementation(libs.junit)
 }

@@ -11,6 +11,21 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors
 
+/** The host's subnet as a dotted prefix: "192.168.3.101" -> "192.168.3.". Null when the host
+ *  is not a dotted address (a name, an IPv6 literal, a bare label), since there is then no
+ *  prefix to match interfaces against. */
+internal fun subnetPrefix(host: String?): String? {
+    if (host == null) return null
+    val cut = host.lastIndexOf('.')
+    if (cut <= 0) return null
+    return host.substring(0, cut + 1)
+}
+
+/** Whether any of an interface's addresses sits in [prefix]'s subnet. The dot terminating
+ *  the prefix is what keeps 192.168.3. from matching 192.168.30.x. */
+internal fun addressesMatch(prefix: String, addresses: List<String?>): Boolean =
+    addresses.any { it?.startsWith(prefix) == true }
+
 /**
  * The goggle's USB link: the configured stream URL, finding/binding the USB-ethernet
  * Network it lives on, and probing whether the RTSP server is up. Keeps this plumbing out
@@ -31,14 +46,11 @@ class GoggleLink(private val context: Context) {
 
     /** the local Network whose interface is on the stream host's /24 (the goggle USB link) */
     fun goggleNetwork(): Network? {
-        val host = Uri.parse(streamUrl()).host ?: return null
-        val cut = host.lastIndexOf('.')
-        if (cut <= 0) return null
-        val prefix = host.substring(0, cut + 1)
+        val prefix = subnetPrefix(Uri.parse(streamUrl()).host) ?: return null
         val mgr = cm ?: return null
         for (network in mgr.allNetworks) {
             val lp = mgr.getLinkProperties(network) ?: continue
-            if (lp.linkAddresses.any { it.address.hostAddress?.startsWith(prefix) == true }) {
+            if (addressesMatch(prefix, lp.linkAddresses.map { it.address.hostAddress })) {
                 return network
             }
         }
