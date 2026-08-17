@@ -15,7 +15,7 @@ import java.io.File
  * things that matter are that it keeps the most recent lines and that it can never grow
  * without bound or throw into the caller.
  */
-class DiagTest {
+class DiagnosticsTest {
 
     @get:Rule
     val temp = TemporaryFolder()
@@ -25,7 +25,7 @@ class DiagTest {
     @Before
     fun setUp() {
         log = File(temp.root, "diag.log")
-        Diag.init(log)
+        Diagnostics.init(log)
     }
 
     @Test
@@ -36,8 +36,8 @@ class DiagTest {
 
     @Test
     fun logAppendsTaggedLines() {
-        Diag.log("conn", "RTSP up, connecting")
-        Diag.log("state", "SEARCHING -> CONNECTING")
+        Diagnostics.log("conn", "RTSP up, connecting")
+        Diagnostics.log("state", "SEARCHING -> CONNECTING")
 
         val lines = log.readLines()
         assertTrue(lines[lines.size - 2].endsWith("conn: RTSP up, connecting"))
@@ -46,28 +46,28 @@ class DiagTest {
 
     @Test
     fun readReturnsTheContents() {
-        Diag.log("gst", "video decoder: amcvideodec-omxhevcdecoder (hardware)")
-        assertTrue(Diag.read()!!.contains("amcvideodec"))
+        Diagnostics.log("gst", "video decoder: amcvideodec-omxhevcdecoder (hardware)")
+        assertTrue(Diagnostics.read()!!.contains("amcvideodec"))
     }
 
     @Test
     fun readIsNullWhenTheFileIsMissing() {
         log.delete()
-        assertNull(Diag.read())
+        assertNull(Diagnostics.read())
     }
 
     @Test
     fun readIsNullWhenTheFileIsEmpty() {
         // clear() truncates rather than deletes, and an empty log must still read as "nothing
         // to show" so the Diagnostics screen shows its placeholder instead of a blank page
-        Diag.clear()
-        assertNull(Diag.read())
+        Diagnostics.clear()
+        assertNull(Diagnostics.read())
     }
 
     @Test
     fun clearEmptiesTheFileWithoutRemovingIt() {
-        Diag.log("app", "something")
-        Diag.clear()
+        Diagnostics.log("app", "something")
+        Diagnostics.clear()
         assertTrue(log.exists())
         assertEquals(0L, log.length())
     }
@@ -76,25 +76,25 @@ class DiagTest {
     fun trimsToTheTailOnceOverTheCap() {
         // an oversized log with a recognisable head and tail
         val head = "HEAD".repeat(4)
-        val filler = "x".repeat((Diag.MAX_BYTES + 1024).toInt())
+        val filler = "x".repeat((Diagnostics.MAX_BYTES + 1024).toInt())
         log.writeText(head + filler)
-        assertTrue(log.length() > Diag.MAX_BYTES)
+        assertTrue(log.length() > Diagnostics.MAX_BYTES)
 
-        Diag.log("app", "after the trim")
+        Diagnostics.log("app", "after the trim")
 
         val text = log.readText()
-        assertTrue("must drop below the cap", log.length() < Diag.MAX_BYTES)
-        assertTrue("keeps roughly the newest half", log.length() > Diag.MAX_BYTES / 4)
+        assertTrue("must drop below the cap", log.length() < Diagnostics.MAX_BYTES)
+        assertTrue("keeps roughly the newest half", log.length() > Diagnostics.MAX_BYTES / 4)
         assertTrue("the oldest lines are gone", !text.contains("HEAD"))
         assertTrue("the newest line survives", text.trimEnd().endsWith("app: after the trim"))
     }
 
     @Test
     fun trimHappensOnlyOnceTheCapIsExceeded() {
-        val under = "y".repeat((Diag.MAX_BYTES / 2).toInt())
+        val under = "y".repeat((Diagnostics.MAX_BYTES / 2).toInt())
         log.writeText(under)
 
-        Diag.log("app", "still small")
+        Diagnostics.log("app", "still small")
 
         assertTrue(log.readText().startsWith("yyy"))
     }
@@ -102,16 +102,16 @@ class DiagTest {
     @Test
     fun loggingBeforeInitIsANoOp() {
         // Diag is a singleton, so a screen reached before MainActivity ran must not crash
-        Diag.reset()
-        Diag.log("app", "no file yet")
-        assertNull(Diag.read())
+        Diagnostics.reset()
+        Diagnostics.log("app", "no file yet")
+        assertNull(Diagnostics.read())
     }
 
     @Test
     fun anUnwritableFileDoesNotThrow() {
         // diagnostics must never take the app down with them
-        Diag.init(File(temp.root, "no-such-dir/diag.log"))
-        Diag.log("app", "into the void")
-        assertNotNull(Diag.read() ?: "")
+        Diagnostics.init(File(temp.root, "no-such-dir/diag.log"))
+        Diagnostics.log("app", "into the void")
+        assertNotNull(Diagnostics.read() ?: "")
     }
 }

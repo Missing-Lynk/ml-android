@@ -12,10 +12,11 @@ class PlayerStateTest {
 
     @Test
     fun mapsTheNativeCodes() {
-        assertEquals(PlayerState.CONNECTING, PlayerState.fromNative(0))  // ST_CONNECTING
-        assertEquals(PlayerState.PLAYING, PlayerState.fromNative(1))     // ST_PLAYING
-        assertEquals(PlayerState.ERROR, PlayerState.fromNative(2))       // ST_ERROR
-        assertEquals(PlayerState.ENDED, PlayerState.fromNative(3))       // ST_ENDED
+        // 0 to 3 are ST_CONNECTING, ST_PLAYING, ST_ERROR and ST_ENDED in gstplayer.c
+        assertEquals(PlayerState.CONNECTING, PlayerState.fromNative(0))
+        assertEquals(PlayerState.PLAYING, PlayerState.fromNative(1))
+        assertEquals(PlayerState.ERROR, PlayerState.fromNative(2))
+        assertEquals(PlayerState.ENDED, PlayerState.fromNative(3))
     }
 
     @Test

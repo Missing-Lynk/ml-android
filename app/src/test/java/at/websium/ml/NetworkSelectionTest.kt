@@ -20,10 +20,11 @@ class NetworkSelectionTest {
         interfaceName = "eth0",
         addresses = listOf("192.168.3.123"),
     )
+    // deliberately on the same subnet as the goggle
     private val homeWifi = NetworkFacts(
         wifi = true,
         interfaceName = "wlan0",
-        addresses = listOf("192.168.3.42"),          // same subnet as the goggle
+        addresses = listOf("192.168.3.42"),
     )
     private val otherWifi = NetworkFacts(
         wifi = true,

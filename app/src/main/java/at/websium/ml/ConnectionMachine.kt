@@ -19,35 +19,45 @@ class ConnectionMachine {
     enum class State {
         SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_QUAD, PLAYING, RECONNECTING,
 
-        /** The player could not be built on this device. Terminal for the process: a native
-         *  library that failed to load will not load on a later attempt. */
+        /**
+         * The player could not be built on this device. Terminal for the process: a native
+         * library that failed to load will not load on a later attempt.
+         */
         UNAVAILABLE,
     }
 
     sealed interface Effect {
-        /** Start an RTSP port probe; answer through [onProbeResult]. */
+        /**
+         * Start an RTSP port probe; answer through [onProbeResult].
+         */
         data object Probe : Effect
 
-        /** Probe issued from inside a session that has no media; answer through [onSessionProbeResult]. */
+        /**
+         * Probe from inside a session that has no media; answer through [onSessionProbeResult].
+         */
         data object SessionProbe : Effect
 
         data object CreatePlayer : Effect
         data object TeardownPlayer : Effect
 
-        /** (Re)point the player at the stream URL and start it. */
+        /**
+         * Point the player at the stream URL and start it.
+         */
         data object StartStream : Effect
 
-        data class Log(val tag: String, val msg: String) : Effect
+        data class Log(val tag: String, val message: String) : Effect
     }
 
     data class Step(val state: State, val effects: List<Effect> = emptyList())
 
-    /** One sample of everything the machine cannot observe for itself. */
+    /**
+     * One sample of everything the machine cannot observe for itself.
+     */
     data class Tick(
         val hasNetwork: Boolean,
-        /** Frames counted by the sink, or null when no player exists. */
+        /** frames counted by the sink, or null when no player exists */
         val frameCount: Int?,
-        /** False while the activity is stopped: stall detection is suspended, the feed is not. */
+        /** false while the activity is stopped: stall detection pauses, the feed does not */
         val foreground: Boolean,
         val nowMs: Long,
     )
@@ -55,47 +65,60 @@ class ConnectionMachine {
     var state: State = State.SEARCHING
         private set
 
-    // Set when the user leaves a session, so a probe parks in READY instead of reconnecting
-    // straight away. Cleared when the goggle goes away and on a Connect tap.
+    /**
+     * Set when the user leaves a session, so a probe parks in READY instead of reconnecting
+     * straight away. Cleared when the goggle goes away and on a Connect tap.
+     */
     private var userDisconnected = false
-    private var playerError = false
+    private var playerFailed = false
 
-    // frame-flow tracking
-    private var lastFrame = 0
+    private var lastFrameCount = 0
     private var lastFrameAtMs = 0L
     private var sessionStartMs = 0L
-    private var lastPlayMs = 0L
+    private var lastStartStreamMs = 0L
     private var lastSessionProbeMs = 0L
 
-    fun onTick(t: Tick): Step {
-        if (state == State.UNAVAILABLE) return Step(state)
+    fun onTick(tick: Tick): Step {
+        if (state == State.UNAVAILABLE) {
+            return Step(state)
+        }
 
-        if (!t.hasNetwork) {
+        if (!tick.hasNetwork) {
             userDisconnected = false
-            return if (state == State.SEARCHING) {
-                Step(state)
-            } else {
-                Step(State.SEARCHING, listOf(Effect.TeardownPlayer)).also { state = it.state }
+            if (state == State.SEARCHING) {
+                return Step(state)
             }
+            state = State.SEARCHING
+            return Step(state, listOf(Effect.TeardownPlayer))
         }
 
         return when (state) {
             State.SEARCHING, State.STREAM_DOWN -> Step(state, listOf(Effect.Probe))
-            State.READY -> Step(state)  // waiting for the Connect tap
-            State.CONNECTING, State.NO_QUAD, State.RECONNECTING -> stepConnecting(t)
-            State.PLAYING -> stepPlaying(t)
-            State.UNAVAILABLE -> Step(state)  // returned above, before the network check
+            // waiting for the Connect tap
+            State.READY -> Step(state)
+            State.CONNECTING, State.NO_QUAD, State.RECONNECTING -> stepConnecting(tick)
+            State.PLAYING -> stepPlaying(tick)
+            // returned above, before the network check
+            State.UNAVAILABLE -> Step(state)
         }
     }
 
-    /** Success connects straight away, unless the user disconnected on purpose. */
-    fun onProbeResult(up: Boolean, nowMs: Long): Step {
-        if (state != State.SEARCHING && state != State.STREAM_DOWN) return Step(state)
-        return when {
-            !up -> Step(State.STREAM_DOWN).also { state = it.state }
-            userDisconnected -> Step(State.READY).also { state = it.state }
-            else -> connect(nowMs, Effect.Log("conn", "RTSP up, connecting"))
+    /**
+     * Success connects straight away, unless the user disconnected on purpose.
+     */
+    fun onProbeResult(portOpen: Boolean, nowMs: Long): Step {
+        if (state != State.SEARCHING && state != State.STREAM_DOWN) {
+            return Step(state)
         }
+        if (!portOpen) {
+            state = State.STREAM_DOWN
+            return Step(state)
+        }
+        if (userDisconnected) {
+            state = State.READY
+            return Step(state)
+        }
+        return connect(nowMs, Effect.Log("conn", "RTSP up, connecting"))
     }
 
     /**
@@ -103,22 +126,32 @@ class ConnectionMachine {
      * switched off), so hand back to the auto-connect path. A probe takes up to its timeout,
      * so media may have started flowing in the meantime.
      */
-    fun onSessionProbeResult(up: Boolean, frameCount: Int, nowMs: Long): Step {
-        if (up || state !in SESSION_STATES || frameCount > 0) return Step(state)
+    fun onSessionProbeResult(portOpen: Boolean, frameCount: Int, nowMs: Long): Step {
+        if (portOpen || state !in SESSION_STATES || frameCount > 0) {
+            return Step(state)
+        }
         state = State.STREAM_DOWN
         return Step(
             state,
-            listOf(Effect.Log("conn", "RTSP port closed, waiting for the stream"), Effect.TeardownPlayer)
+            listOf(
+                Effect.Log("conn", "RTSP port closed, waiting for the stream"),
+                Effect.TeardownPlayer,
+            )
         )
     }
 
-    fun onConnectTapped(nowMs: Long): Step =
-        if (state == State.UNAVAILABLE) Step(state) else connect(nowMs)
+    fun onConnectTapped(nowMs: Long): Step {
+        if (state == State.UNAVAILABLE) {
+            return Step(state)
+        }
+        return connect(nowMs)
+    }
 
     /**
      * The player could not be constructed: GStreamer failed to initialise, or its native
      * libraries are missing for this device's ABI. Nothing the app does later changes that,
-     * so it stops here with something on screen instead of crashing out of [Effect.CreatePlayer].
+     * so it stops here with something on screen instead of crashing out of
+     * [Effect.CreatePlayer].
      */
     fun onPlayerUnavailable(detail: String?): Step {
         state = State.UNAVAILABLE
@@ -126,15 +159,25 @@ class ConnectionMachine {
     }
 
     fun onDisconnect(hasNetwork: Boolean, nowMs: Long): Step {
-        if (state == State.UNAVAILABLE) return Step(state)
+        if (state == State.UNAVAILABLE) {
+            return Step(state)
+        }
         userDisconnected = hasNetwork
-        state = if (hasNetwork) State.READY else State.SEARCHING
+        if (hasNetwork) {
+            state = State.READY
+        } else {
+            state = State.SEARCHING
+        }
         return Step(state, listOf(Effect.TeardownPlayer))
     }
 
-    /** The player reported a state; ERROR and ENDED both mean the attempt failed. */
-    fun onPlayerState(s: PlayerState) {
-        if (s == PlayerState.ERROR || s == PlayerState.ENDED) playerError = true
+    /**
+     * ERROR and ENDED both mean the current attempt failed.
+     */
+    fun onPlayerState(playerState: PlayerState) {
+        if (playerState == PlayerState.ERROR || playerState == PlayerState.ENDED) {
+            playerFailed = true
+        }
     }
 
     /**
@@ -142,90 +185,118 @@ class ConnectionMachine {
      * attempt has actually failed (rebuilding on a timer interrupts rtspsrc mid-handshake and
      * yields "can't get sdp"), with a long fallback for an attempt that simply hangs.
      */
-    private fun stepConnecting(t: Tick): Step {
-        val frames = t.frameCount ?: return Step(state)
+    private fun stepConnecting(tick: Tick): Step {
+        val frames = tick.frameCount
+        if (frames == null) {
+            return Step(state)
+        }
         if (frames > 0) {
-            resetFrameTracking(frames, t.nowMs)
+            resetFrameTracking(frames, tick.nowMs)
             state = State.PLAYING
             return Step(state)
         }
 
         val effects = mutableListOf<Effect>()
 
-        if (t.nowMs - lastSessionProbeMs >= SESSION_PROBE_MS) {
-            lastSessionProbeMs = t.nowMs
+        if (tick.nowMs - lastSessionProbeMs >= SESSION_PROBE_MS) {
+            lastSessionProbeMs = tick.nowMs
             effects += Effect.SessionProbe
         }
 
-        val sinceRebuild = t.nowMs - lastPlayMs
-        if (playerError && sinceRebuild >= REBUILD_GAP_MS) {
-            playerError = false
+        val sinceStartStream = tick.nowMs - lastStartStreamMs
+        if (playerFailed && sinceStartStream >= REBUILD_GAP_MS) {
+            playerFailed = false
             effects += Effect.Log("conn", "rebuild after player error")
-            effects += startStream(t.nowMs)
-        } else if (sinceRebuild >= STUCK_MS) {
+            effects += startStream(tick.nowMs)
+        } else if (sinceStartStream >= STUCK_MS) {
             effects += Effect.Log("conn", "rebuild after ${STUCK_MS}ms stuck (no frames)")
-            effects += startStream(t.nowMs)
+            effects += startStream(tick.nowMs)
         }
 
-        if (state == State.CONNECTING && t.nowMs - sessionStartMs > NO_VIDEO_MS) {
+        if (state == State.CONNECTING && tick.nowMs - sessionStartMs > NO_VIDEO_MS) {
             state = State.NO_QUAD
         }
         return Step(state, effects)
     }
 
-    /** Playing: watch for a frozen stream and flip to reconnecting. */
-    private fun stepPlaying(t: Tick): Step {
-        val frames = t.frameCount ?: return Step(state)
-        if (frames != lastFrame) {
-            lastFrame = frames
-            lastFrameAtMs = t.nowMs
+    /**
+     * Playing: watch for a frozen stream and flip to reconnecting.
+     */
+    private fun stepPlaying(tick: Tick): Step {
+        val frames = tick.frameCount
+        if (frames == null) {
             return Step(state)
         }
-        if (!t.foreground || t.nowMs - lastFrameAtMs <= STALL_MS) return Step(state)
+        if (frames != lastFrameCount) {
+            lastFrameCount = frames
+            lastFrameAtMs = tick.nowMs
+            return Step(state)
+        }
+        if (!tick.foreground || tick.nowMs - lastFrameAtMs <= STALL_MS) {
+            return Step(state)
+        }
 
         state = State.RECONNECTING
         return Step(
             state,
             listOf(
                 Effect.Log("play", "stalled ${STALL_MS}ms (last frame=$frames) -> reconnecting"),
-                startStream(t.nowMs),
+                startStream(tick.nowMs),
             )
         )
     }
 
-    private fun connect(nowMs: Long, vararg leading: Effect): Step {
+    private fun connect(nowMs: Long, vararg leadingEffects: Effect): Step {
         userDisconnected = false
         sessionStartMs = nowMs
         lastSessionProbeMs = nowMs
         state = State.CONNECTING
-        return Step(state, leading.toList() + listOf(Effect.CreatePlayer, startStream(nowMs)))
+        return Step(
+            state,
+            leadingEffects.toList() + listOf(Effect.CreatePlayer, startStream(nowMs)),
+        )
     }
 
-    /** Baseline the stall detector: no frames counted since right now. */
+    /**
+     * Baseline the stall detector: no frames counted since right now.
+     */
     private fun startStream(nowMs: Long): Effect {
-        lastPlayMs = resetFrameTracking(0, nowMs)
+        lastStartStreamMs = resetFrameTracking(0, nowMs)
         return Effect.StartStream
     }
 
     private fun resetFrameTracking(frameCount: Int, nowMs: Long): Long {
-        lastFrame = frameCount
+        lastFrameCount = frameCount
         lastFrameAtMs = nowMs
         return nowMs
     }
 
     internal companion object {
-        /** States with a live player behind them. */
-        val SESSION_STATES = setOf(State.CONNECTING, State.NO_QUAD, State.PLAYING, State.RECONNECTING)
+        /**
+         * States with a live player behind them.
+         */
+        val SESSION_STATES =
+            setOf(State.CONNECTING, State.NO_QUAD, State.PLAYING, State.RECONNECTING)
 
-        const val NO_VIDEO_MS = 7000L      // CONNECTING with no frames -> NO_QUAD
-        // Min gap before rebuilding after a failed attempt (debounce; do not interrupt an
-        // in-progress rtspsrc handshake), and a long fallback if an attempt just hangs.
+        /** CONNECTING with no frames for this long blames the quad */
+        const val NO_VIDEO_MS = 7000L
+
+        /**
+         * Minimum gap before rebuilding after a failed attempt, so a rebuild cannot interrupt
+         * an rtspsrc handshake still in progress.
+         */
         const val REBUILD_GAP_MS = 4000L
+
+        /** fallback for an attempt that neither fails nor delivers */
         const val STUCK_MS = 20000L
-        // PLAYING with no new frames -> RECONNECTING. Kept high: FPV feeds blip for a few
-        // seconds (Tx-side link resets); only a real drop (battery swap) should reconnect.
+
+        /**
+         * PLAYING with no new frames for this long reconnects. Kept high: FPV feeds blip for a
+         * few seconds on Tx-side link resets, and only a real drop should reconnect.
+         */
         const val STALL_MS = 8000L
-        // How often a session with no media re-checks that the RTSP port is still open.
+
+        /** how often a session with no media re-checks that the RTSP port is still open */
         const val SESSION_PROBE_MS = 5000L
     }
 }

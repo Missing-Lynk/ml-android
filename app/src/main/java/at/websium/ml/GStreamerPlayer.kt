@@ -16,7 +16,7 @@ import org.freedesktop.gstreamer.GStreamer
  */
 class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextureListener {
 
-    // owned by the native side (a CustomData*). Name/type must match GetFieldID in the JNI.
+    // owned by the native side (a CustomData*); the name and type must match GetFieldID in the JNI
     private var nativeCustomData: Long = 0
 
     override var onState: ((PlayerState) -> Unit)? = null
@@ -45,8 +45,12 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     }
 
     override fun setVideoVisible(visible: Boolean) {
-        // INVISIBLE (not GONE) keeps the surface valid so the pipeline can render to it
-        videoView?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        // INVISIBLE rather than GONE keeps the surface valid, so the pipeline can render to it
+        if (visible) {
+            videoView?.visibility = View.VISIBLE
+        } else {
+            videoView?.visibility = View.INVISIBLE
+        }
     }
 
     override fun play(url: String) {
@@ -62,33 +66,47 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
         videoView = null
     }
 
-    /** Invoked from the native GStreamer thread with a diagnostic line (decoder choice,
-     *  pipeline rebuilds); persisted to the on-device log. */
-    private fun onNativeLog(msg: String) {
-        Diag.log("gst", msg)
+    /**
+     * Invoked from the native GStreamer thread with a diagnostic line, such as the decoder
+     * chosen or a pipeline rebuild, and persisted to the on-device log.
+     */
+    private fun onNativeLog(message: String) {
+        Diagnostics.log("gst", message)
     }
 
-    /** Invoked from the native GStreamer thread; MainActivity marshals onState to the UI. */
-    private fun onNativeState(state: Int) {
-        onState?.invoke(PlayerState.fromNative(state))
+    /**
+     * Invoked from the native GStreamer thread; MainActivity marshals onState to the UI.
+     */
+    private fun onNativeState(stateCode: Int) {
+        onState?.invoke(PlayerState.fromNative(stateCode))
     }
 
-    override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
-        val s = Surface(st)
-        surface = s
-        nativeSurfaceInit(s)
+    override fun onSurfaceTextureAvailable(
+        surfaceTexture: SurfaceTexture,
+        width: Int,
+        height: Int,
+    ) {
+        val created = Surface(surfaceTexture)
+        surface = created
+        nativeSurfaceInit(created)
     }
 
-    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {}
+    override fun onSurfaceTextureSizeChanged(
+        surfaceTexture: SurfaceTexture,
+        width: Int,
+        height: Int,
+    ) {
+    }
 
-    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+    override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
         nativeSurfaceFinalize()
         surface?.release()
         surface = null
         return true
     }
 
-    override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+    override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
+    }
 
     private external fun nativeInit()
     private external fun nativeFinalize()

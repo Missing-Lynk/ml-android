@@ -6,35 +6,46 @@ enum class PlayerState {
     CONNECTING, PLAYING, ERROR, ENDED;
 
     companion object {
-        /** Map a native state code to a state. The codes are the `ST_*` defines in
-         *  jni/gstplayer.c and the mapping is a hand-maintained contract with that file;
-         *  anything unrecognised is treated as the stream having ended. */
-        fun fromNative(code: Int): PlayerState = when (code) {
-            0 -> CONNECTING
-            1 -> PLAYING
-            2 -> ERROR
-            else -> ENDED
+        /**
+         * Map a native state code to a state. The codes are the `ST_*` defines in
+         * jni/gstplayer.c and the mapping is a hand-maintained contract with that file.
+         * Anything unrecognised counts as the stream having ended.
+         */
+        fun fromNative(code: Int): PlayerState {
+            return when (code) {
+                0 -> CONNECTING
+                1 -> PLAYING
+                2 -> ERROR
+                else -> ENDED
+            }
         }
     }
 }
 
 /**
- * Thin player abstraction (GStreamer backs it; the interface keeps the Activity decoupled).
+ * Thin player abstraction. GStreamer backs it; the interface keeps the Activity decoupled.
  */
 interface StreamPlayer {
-    /** State changes (delivered on a player thread; marshal to the UI thread yourself). */
+    /** state changes, delivered on a player thread: marshal to the UI thread yourself */
     var onState: ((PlayerState) -> Unit)?
 
-    /** Monotonic count of frames that have reached the sink (0 = no media flowing yet). */
-    val frameCount: Int get() = 0
+    /** monotonic count of frames that have reached the sink; 0 means no media is flowing */
+    val frameCount: Int
 
-    /** Player creates its own render view and adds it (behind other children) into [container]. Call once. */
+    /**
+     * The player creates its own render view and adds it into [container], behind the other
+     * children. Call once.
+     */
     fun attachTo(container: ViewGroup)
 
-    /** Show/hide the render view (hide it when not playing so no frozen last frame shows). */
-    fun setVideoVisible(visible: Boolean) {}
+    /**
+     * Show or hide the render view. Hide it when not playing, so no frozen last frame shows.
+     */
+    fun setVideoVisible(visible: Boolean)
 
-    /** Open and play [url]. */
+    /**
+     * Open and play [url].
+     */
     fun play(url: String)
 
     fun release()

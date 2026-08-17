@@ -28,7 +28,7 @@ class DiagnosticsActivity : AppCompatActivity() {
         scroll = findViewById(R.id.diag_scroll)
         findViewById<Button>(R.id.diag_share).setOnClickListener { share() }
         findViewById<Button>(R.id.diag_clear).setOnClickListener {
-            Diag.clear()
+            Diagnostics.clear()
             refresh()
         }
     }
@@ -39,14 +39,16 @@ class DiagnosticsActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        text.text = Diag.read() ?: getString(R.string.diag_empty)
+        text.text = Diagnostics.read() ?: getString(R.string.diag_empty)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
     private fun share() {
-        val f = Diag.file() ?: return
-        if (!f.exists()) return
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+        val logFile = Diagnostics.file()
+        if (logFile == null || !logFile.exists()) {
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", logFile)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)

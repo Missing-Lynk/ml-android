@@ -18,26 +18,27 @@ import org.junit.Test
  */
 class ConnectionMachineTest {
 
-    private val m = ConnectionMachine()
+    private val machine = ConnectionMachine()
 
     private fun tick(
         now: Long,
         hasNetwork: Boolean = true,
         frames: Int? = null,
         foreground: Boolean = true,
-    ) = m.onTick(Tick(hasNetwork, frames, foreground, now))
+    ) = machine.onTick(Tick(hasNetwork, frames, foreground, now))
 
     /** drive to CONNECTING the way an auto-connect does, with a player attached at t=0 */
     private fun autoConnect() {
-        tick(0)                       // SEARCHING, asks for a probe
-        m.onProbeResult(true, 0)      // -> CONNECTING, player created and started
+        // SEARCHING asks for a probe, whose success creates the player and starts it
+        tick(0)
+        machine.onProbeResult(true, 0)
     }
 
     // ---- searching for the goggle ----
 
     @Test
     fun startsSearching() {
-        assertEquals(State.SEARCHING, m.state)
+        assertEquals(State.SEARCHING, machine.state)
     }
 
     @Test
@@ -55,7 +56,7 @@ class ConnectionMachineTest {
     @Test
     fun aClosedPortParksInStreamDown() {
         tick(1000)
-        val step = m.onProbeResult(false, 1000)
+        val step = machine.onProbeResult(false, 1000)
         assertEquals(State.STREAM_DOWN, step.state)
         assertTrue(step.effects.isEmpty())
     }
@@ -63,14 +64,14 @@ class ConnectionMachineTest {
     @Test
     fun streamDownKeepsProbing() {
         tick(1000)
-        m.onProbeResult(false, 1000)
+        machine.onProbeResult(false, 1000)
         assertEquals(listOf(Effect.Probe), tick(2000).effects)
     }
 
     @Test
     fun anOpenPortConnectsStraightAway() {
         tick(0)
-        val step = m.onProbeResult(true, 0)
+        val step = machine.onProbeResult(true, 0)
         assertEquals(State.CONNECTING, step.state)
         assertEquals(
             listOf(Effect.Log("conn", "RTSP up, connecting"), Effect.CreatePlayer, Effect.StartStream),
@@ -82,8 +83,8 @@ class ConnectionMachineTest {
     fun aStaleProbeAnswerIsIgnored() {
         // the probe takes up to its timeout, by which time a Connect tap may have moved on
         tick(0)
-        m.onConnectTapped(0)
-        val step = m.onProbeResult(true, 500)
+        machine.onConnectTapped(0)
+        val step = machine.onProbeResult(true, 500)
         assertEquals(State.CONNECTING, step.state)
         assertTrue(step.effects.isEmpty())
     }
@@ -93,7 +94,7 @@ class ConnectionMachineTest {
     @Test
     fun disconnectingWithTheGoggleStillAttachedParksInReady() {
         autoConnect()
-        val step = m.onDisconnect(hasNetwork = true, nowMs = 1000)
+        val step = machine.onDisconnect(hasNetwork = true, nowMs = 1000)
         assertEquals(State.READY, step.state)
         assertEquals(listOf(Effect.TeardownPlayer), step.effects)
     }
@@ -101,7 +102,7 @@ class ConnectionMachineTest {
     @Test
     fun readyWaitsForTheConnectTap() {
         autoConnect()
-        m.onDisconnect(hasNetwork = true, nowMs = 1000)
+        machine.onDisconnect(hasNetwork = true, nowMs = 1000)
         val step = tick(2000)
         assertEquals(State.READY, step.state)
         assertTrue(step.effects.isEmpty())
@@ -110,16 +111,16 @@ class ConnectionMachineTest {
     @Test
     fun aDeliberateDisconnectSurvivesTheNextProbe() {
         autoConnect()
-        m.onDisconnect(hasNetwork = true, nowMs = 1000)
+        machine.onDisconnect(hasNetwork = true, nowMs = 1000)
         // the port is still open, but the user asked to leave, so it must not reconnect itself
-        assertEquals(State.READY, m.onProbeResult(true, 2000).state)
+        assertEquals(State.READY, machine.onProbeResult(true, 2000).state)
     }
 
     @Test
     fun theConnectTapStartsASession() {
         autoConnect()
-        m.onDisconnect(hasNetwork = true, nowMs = 1000)
-        val step = m.onConnectTapped(2000)
+        machine.onDisconnect(hasNetwork = true, nowMs = 1000)
+        val step = machine.onConnectTapped(2000)
         assertEquals(State.CONNECTING, step.state)
         assertEquals(listOf(Effect.CreatePlayer, Effect.StartStream), step.effects)
     }
@@ -127,7 +128,7 @@ class ConnectionMachineTest {
     @Test
     fun disconnectingWithTheGoggleGoneGoesBackToSearching() {
         autoConnect()
-        val step = m.onDisconnect(hasNetwork = false, nowMs = 1000)
+        val step = machine.onDisconnect(hasNetwork = false, nowMs = 1000)
         assertEquals(State.SEARCHING, step.state)
         assertEquals(listOf(Effect.TeardownPlayer), step.effects)
     }
@@ -135,12 +136,13 @@ class ConnectionMachineTest {
     @Test
     fun unpluggingTheGoggleRearmsAutoConnect() {
         autoConnect()
-        m.onDisconnect(hasNetwork = true, nowMs = 1000)   // parked in READY
-        tick(2000, hasNetwork = false)                    // unplugged: clears the park
-        assertEquals(State.SEARCHING, m.state)
+        // parked in READY, then unplugged, which clears the park
+        machine.onDisconnect(hasNetwork = true, nowMs = 1000)
+        tick(2000, hasNetwork = false)
+        assertEquals(State.SEARCHING, machine.state)
 
         tick(3000)
-        assertEquals(State.CONNECTING, m.onProbeResult(true, 3000).state)
+        assertEquals(State.CONNECTING, machine.onProbeResult(true, 3000).state)
     }
 
     // ---- waiting for media ----
@@ -176,7 +178,7 @@ class ConnectionMachineTest {
     @Test
     fun aFailedAttemptIsRebuiltAfterTheDebounce() {
         autoConnect()
-        m.onPlayerState(PlayerState.ERROR)
+        machine.onPlayerState(PlayerState.ERROR)
 
         assertFalse(tick(3999, frames = 0).effects.contains(Effect.StartStream))
         assertTrue(tick(4000, frames = 0).effects.contains(Effect.StartStream))
@@ -185,15 +187,16 @@ class ConnectionMachineTest {
     @Test
     fun anEndedStreamCountsAsAFailedAttempt() {
         autoConnect()
-        m.onPlayerState(PlayerState.ENDED)
+        machine.onPlayerState(PlayerState.ENDED)
         assertTrue(tick(4000, frames = 0).effects.contains(Effect.StartStream))
     }
 
     @Test
     fun aRebuiltAttemptIsGivenTheFullDebounceAgain() {
         autoConnect()
-        m.onPlayerState(PlayerState.ERROR)
-        tick(4000, frames = 0)                       // rebuilt, error consumed
+        machine.onPlayerState(PlayerState.ERROR)
+        // rebuilt, so the error is consumed
+        tick(4000, frames = 0)
         assertFalse(tick(5000, frames = 0).effects.contains(Effect.StartStream))
     }
 
@@ -221,7 +224,7 @@ class ConnectionMachineTest {
     fun aClosedPortDuringASessionHandsBackToTheAutoConnectPath() {
         autoConnect()
         tick(5000, frames = 0)
-        val step = m.onSessionProbeResult(up = false, frameCount = 0, nowMs = 5100)
+        val step = machine.onSessionProbeResult(portOpen = false, frameCount = 0, nowMs = 5100)
         assertEquals(State.STREAM_DOWN, step.state)
         assertEquals(
             listOf(
@@ -236,7 +239,7 @@ class ConnectionMachineTest {
     fun anOpenPortDuringASessionChangesNothing() {
         autoConnect()
         tick(5000, frames = 0)
-        val step = m.onSessionProbeResult(up = true, frameCount = 0, nowMs = 5100)
+        val step = machine.onSessionProbeResult(portOpen = true, frameCount = 0, nowMs = 5100)
         assertEquals(State.CONNECTING, step.state)
         assertTrue(step.effects.isEmpty())
     }
@@ -246,7 +249,7 @@ class ConnectionMachineTest {
         // the probe blocks up to its timeout; frames may start flowing while it is outstanding
         autoConnect()
         tick(5000, frames = 0)
-        val step = m.onSessionProbeResult(up = false, frameCount = 12, nowMs = 5100)
+        val step = machine.onSessionProbeResult(portOpen = false, frameCount = 12, nowMs = 5100)
         assertEquals(State.CONNECTING, step.state)
         assertTrue(step.effects.isEmpty())
     }
@@ -255,8 +258,8 @@ class ConnectionMachineTest {
     fun theSessionProbeIsIgnoredOutsideASession() {
         autoConnect()
         tick(5000, frames = 0)
-        m.onDisconnect(hasNetwork = true, nowMs = 5050)
-        val step = m.onSessionProbeResult(up = false, frameCount = 0, nowMs = 5100)
+        machine.onDisconnect(hasNetwork = true, nowMs = 5050)
+        val step = machine.onSessionProbeResult(portOpen = false, frameCount = 0, nowMs = 5100)
         assertEquals(State.READY, step.state)
         assertTrue(step.effects.isEmpty())
     }
@@ -293,7 +296,8 @@ class ConnectionMachineTest {
     fun reconnectingPromotesBackToPlayingOnNewFrames() {
         autoConnect()
         tick(1000, frames = 5)
-        tick(9001, frames = 5)                       // -> RECONNECTING
+        // stalls into RECONNECTING
+        tick(9001, frames = 5)
         assertEquals(State.PLAYING, tick(10000, frames = 6).state)
     }
 
@@ -310,7 +314,8 @@ class ConnectionMachineTest {
     fun theStallClockRestartsWithEachNewFrame() {
         autoConnect()
         tick(1000, frames = 5)
-        tick(8000, frames = 6)                       // 7 s later, still fine
+        // a new frame 7 s later, still under the threshold
+        tick(8000, frames = 6)
         assertEquals(State.PLAYING, tick(15000, frames = 7).state)
     }
 
@@ -319,7 +324,7 @@ class ConnectionMachineTest {
     @Test
     fun anUnbuildablePlayerStopsAtUnavailable() {
         autoConnect()
-        val step = m.onPlayerUnavailable("dlopen failed: libgstreamer_android.so not found")
+        val step = machine.onPlayerUnavailable("dlopen failed: libgstreamer_android.so not found")
         assertEquals(State.UNAVAILABLE, step.state)
         assertEquals(
             listOf(Effect.Log("player", "unavailable: dlopen failed: libgstreamer_android.so not found")),
@@ -331,14 +336,14 @@ class ConnectionMachineTest {
     fun anUnknownFailureStillLogsSomething() {
         assertEquals(
             listOf(Effect.Log("player", "unavailable: unknown")),
-            m.onPlayerUnavailable(null).effects,
+            machine.onPlayerUnavailable(null).effects,
         )
     }
 
     @Test
     fun unavailableIsTerminalAcrossTicks() {
         autoConnect()
-        m.onPlayerUnavailable("no decoder")
+        machine.onPlayerUnavailable("no decoder")
         for (t in listOf(1000L, 5000L, 30000L)) {
             val step = tick(t, frames = 0)
             assertEquals(State.UNAVAILABLE, step.state)
@@ -351,27 +356,27 @@ class ConnectionMachineTest {
         // replugging cannot fix a native library that failed to load, so it must not look like
         // it is searching again
         autoConnect()
-        m.onPlayerUnavailable("no decoder")
+        machine.onPlayerUnavailable("no decoder")
         assertEquals(State.UNAVAILABLE, tick(1000, hasNetwork = false).state)
         assertEquals(State.UNAVAILABLE, tick(2000, hasNetwork = true).state)
     }
 
     @Test
     fun unavailableIgnoresTheConnectTapAndDisconnect() {
-        m.onPlayerUnavailable("no decoder")
-        assertEquals(State.UNAVAILABLE, m.onConnectTapped(1000).state)
-        assertTrue(m.onConnectTapped(1000).effects.isEmpty())
-        assertEquals(State.UNAVAILABLE, m.onDisconnect(hasNetwork = true, nowMs = 1000).state)
-        assertTrue(m.onDisconnect(hasNetwork = true, nowMs = 1000).effects.isEmpty())
+        machine.onPlayerUnavailable("no decoder")
+        assertEquals(State.UNAVAILABLE, machine.onConnectTapped(1000).state)
+        assertTrue(machine.onConnectTapped(1000).effects.isEmpty())
+        assertEquals(State.UNAVAILABLE, machine.onDisconnect(hasNetwork = true, nowMs = 1000).state)
+        assertTrue(machine.onDisconnect(hasNetwork = true, nowMs = 1000).effects.isEmpty())
     }
 
     @Test
     fun unavailableIgnoresAnOutstandingProbe() {
         // a probe issued before the failure can answer after it
         tick(0)
-        m.onPlayerUnavailable("no decoder")
-        assertEquals(State.UNAVAILABLE, m.onProbeResult(true, 500).state)
-        assertEquals(State.UNAVAILABLE, m.onSessionProbeResult(false, 0, 500).state)
+        machine.onPlayerUnavailable("no decoder")
+        assertEquals(State.UNAVAILABLE, machine.onProbeResult(true, 500).state)
+        assertEquals(State.UNAVAILABLE, machine.onSessionProbeResult(false, 0, 500).state)
     }
 
     @Test

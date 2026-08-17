@@ -63,7 +63,9 @@ class MainActivity : AppCompatActivity() {
         setOf(ConnectionMachine.State.PLAYING, ConnectionMachine.State.RECONNECTING)
 
     private val leaveSession = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() = disconnect()
+        override fun handleOnBackPressed() {
+            disconnect()
+        }
     }
 
     private val hideFullscreenBack = Runnable { fullscreenBack.visibility = View.GONE }
@@ -95,9 +97,9 @@ class MainActivity : AppCompatActivity() {
         // targetSdk 36 forces edge-to-edge; pad the content by the system-bar insets so the
         // toolbar sits below the status bar. When bars are hidden (playing) the insets are 0,
         // so the video stays fullscreen.
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
 
@@ -160,12 +162,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun step() {
-        val net = link.goggleNetwork()
-        link.bindTo(net)
+        val network = link.goggleNetwork()
+        link.bindTo(network)
         apply(
             machine.onTick(
                 ConnectionMachine.Tick(
-                    hasNetwork = net != null,
+                    hasNetwork = network != null,
                     frameCount = player?.frameCount,
                     foreground = foreground,
                     nowMs = now(),
@@ -174,51 +176,84 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun disconnect() = apply(machine.onDisconnect(link.goggleNetwork() != null, now()))
+    private fun disconnect() {
+        apply(machine.onDisconnect(link.goggleNetwork() != null, now()))
+    }
 
-    /** carry out the machine's effects, then bring the views up to date */
+    /**
+     * Carry out the machine's effects, then bring the views up to date.
+     */
     private fun apply(step: ConnectionMachine.Step) {
         var playerFailure: String? = null
         step.effects.forEach { effect ->
             when (effect) {
-                is ConnectionMachine.Effect.Log -> Diag.log(effect.tag, effect.msg)
-                ConnectionMachine.Effect.CreatePlayer ->
+                is ConnectionMachine.Effect.Log -> {
+                    Diagnostics.log(effect.tag, effect.message)
+                }
+                ConnectionMachine.Effect.CreatePlayer -> {
                     if (playerFailure == null && ensurePlayer() == null) {
                         playerFailure = lastPlayerFailure
                     }
-                ConnectionMachine.Effect.TeardownPlayer -> teardownPlayer()
-                ConnectionMachine.Effect.StartStream -> player?.play(link.streamUrl())
-                ConnectionMachine.Effect.Probe ->
-                    link.probeRtsp { up -> apply(machine.onProbeResult(up, now())) }
-                ConnectionMachine.Effect.SessionProbe -> link.probeRtsp { up ->
-                    apply(machine.onSessionProbeResult(up, player?.frameCount ?: 0, now()))
+                }
+                ConnectionMachine.Effect.TeardownPlayer -> {
+                    teardownPlayer()
+                }
+                ConnectionMachine.Effect.StartStream -> {
+                    player?.play(link.streamUrl())
+                }
+                ConnectionMachine.Effect.Probe -> {
+                    link.probeRtsp { portOpen ->
+                        apply(machine.onProbeResult(portOpen, now()))
+                    }
+                }
+                ConnectionMachine.Effect.SessionProbe -> {
+                    link.probeRtsp { portOpen ->
+                        val frames = player?.frameCount ?: 0
+                        apply(machine.onSessionProbeResult(portOpen, frames, now()))
+                    }
                 }
             }
         }
         // a player that cannot be built supersedes whatever state this step reached
-        playerFailure?.let { return apply(machine.onPlayerUnavailable(it)) }
-        if (step.state != rendered) render(step.state)
+        val failure = playerFailure
+        if (failure != null) {
+            apply(machine.onPlayerUnavailable(failure))
+            return
+        }
+        if (step.state != rendered) {
+            render(step.state)
+        }
     }
 
-    private fun now() = SystemClock.elapsedRealtime()
+    private fun now(): Long {
+        return SystemClock.elapsedRealtime()
+    }
 
     // ---- player ----
 
-    /** null when the player cannot be built here; [lastPlayerFailure] then says why */
+    /**
+     * Null when the player cannot be built here; [lastPlayerFailure] then says why.
+     */
     private fun ensurePlayer(): StreamPlayer? {
-        player?.let { return it }
+        val existing = player
+        if (existing != null) {
+            return existing
+        }
+        /*
+         * Throwable, not Exception: GStreamer.init declares a checked Exception, but the
+         * companion's System.loadLibrary raises UnsatisfiedLinkError, which arrives wrapped in
+         * ExceptionInInitializerError.
+         */
         return try {
-            GStreamerPlayer(this).also {
-                it.attachTo(videoContainer)
-                it.onState = { s -> runOnUiThread { machine.onPlayerState(s) } }
-                player = it
+            val created = GStreamerPlayer(this)
+            created.attachTo(videoContainer)
+            created.onState = { playerState ->
+                runOnUiThread { machine.onPlayerState(playerState) }
             }
-        } catch (t: Throwable) {
-            // Throwable, not Exception: GStreamer.init declares a checked Exception, but the
-            // companion's System.loadLibrary raises UnsatisfiedLinkError, which arrives here
-            // wrapped in ExceptionInInitializerError. Both are unrecoverable and neither
-            // should reach the default handler as a crash.
-            lastPlayerFailure = t.message ?: t.javaClass.simpleName
+            player = created
+            created
+        } catch (failure: Throwable) {
+            lastPlayerFailure = failure.message ?: failure.javaClass.simpleName
             null
         }
     }
@@ -231,31 +266,29 @@ class MainActivity : AppCompatActivity() {
     // ---- rendering ----
 
     private fun render(state: ConnectionMachine.State) {
-        if (rendered != null) Diag.log("state", "$rendered -> $state")
+        if (rendered != null) {
+            Diagnostics.log("state", "$rendered -> $state")
+        }
         rendered = state
 
         val playing = state == ConnectionMachine.State.PLAYING
         val fullscreen = state in fullscreenStates
         val inSession = state in ConnectionMachine.SESSION_STATES
+        val waitingForGoggle = state == ConnectionMachine.State.SEARCHING ||
+            state == ConnectionMachine.State.STREAM_DOWN
 
-        toolbar.visibility = if (fullscreen) View.GONE else View.VISIBLE
-        statusPanel.visibility = if (playing) View.GONE else View.VISIBLE
+        toolbar.visibility = visibilityOf(!fullscreen)
+        statusPanel.visibility = visibilityOf(!playing)
+        progress.visibility = visibilityOf(state in BUSY_STATES)
+        connectButton.visibility = visibilityOf(state == ConnectionMachine.State.READY)
+        statusImage.visibility = visibilityOf(state == ConnectionMachine.State.RECONNECTING)
+        // the setup hint is for a user who has no goggle or no stream yet
+        statusHint.visibility = visibilityOf(waitingForGoggle)
 
-        progress.visibility = when (state) {
-            ConnectionMachine.State.READY,
-            ConnectionMachine.State.PLAYING,
-            ConnectionMachine.State.UNAVAILABLE -> View.GONE
-            else -> View.VISIBLE
+        val statusText = statusTextFor(state)
+        if (statusText != null) {
+            this.statusText.text = getString(statusText)
         }
-        connectButton.visibility =
-            if (state == ConnectionMachine.State.READY) View.VISIBLE else View.GONE
-        statusImage.visibility =
-            if (state == ConnectionMachine.State.RECONNECTING) View.VISIBLE else View.GONE
-        statusTextFor(state)?.let { statusText.text = getString(it) }
-        // setup hint only while there's no goggle/stream yet
-        statusHint.visibility = if (
-            state == ConnectionMachine.State.SEARCHING || state == ConnectionMachine.State.STREAM_DOWN
-        ) View.VISIBLE else View.GONE
 
         // show the video only while actually playing, so no frozen last frame leaks through
         player?.setVideoVisible(playing)
@@ -264,33 +297,49 @@ class MainActivity : AppCompatActivity() {
         ticker.removeCallbacks(hideFullscreenBack)
         fullscreenBack.visibility = View.GONE
 
-        requestedOrientation =
-            if (fullscreen) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        requestedOrientation = when {
+            fullscreen -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
 
         setSystemBarsVisible(!fullscreen)
         leaveSession.isEnabled = inSession
     }
 
-    /** tap-to-reveal the back control while fullscreen; auto-hides */
+    private fun visibilityOf(visible: Boolean): Int {
+        if (visible) {
+            return View.VISIBLE
+        }
+        return View.GONE
+    }
+
+    /**
+     * Tap to reveal the back control while fullscreen; it hides itself again.
+     */
     private fun revealFullscreenBack() {
-        if (rendered !in fullscreenStates) return
+        if (rendered !in fullscreenStates) {
+            return
+        }
         fullscreenBack.visibility = View.VISIBLE
         ticker.removeCallbacks(hideFullscreenBack)
         ticker.postDelayed(hideFullscreenBack, CONTROLS_TIMEOUT_MS)
     }
 
-    /** null while playing: the status panel is hidden then, so there is no copy to show */
+    /**
+     * Null while playing: the status panel is hidden then, so there is no copy to show.
+     */
     @StringRes
-    private fun statusTextFor(s: ConnectionMachine.State): Int? = when (s) {
-        ConnectionMachine.State.SEARCHING -> R.string.state_searching
-        ConnectionMachine.State.STREAM_DOWN -> R.string.state_stream_down
-        ConnectionMachine.State.READY -> R.string.state_ready
-        ConnectionMachine.State.CONNECTING -> R.string.state_connecting
-        ConnectionMachine.State.NO_QUAD -> R.string.state_no_quad
-        ConnectionMachine.State.RECONNECTING -> R.string.state_reconnecting
-        ConnectionMachine.State.UNAVAILABLE -> R.string.state_unavailable
-        ConnectionMachine.State.PLAYING -> null
+    private fun statusTextFor(state: ConnectionMachine.State): Int? {
+        return when (state) {
+            ConnectionMachine.State.SEARCHING -> R.string.state_searching
+            ConnectionMachine.State.STREAM_DOWN -> R.string.state_stream_down
+            ConnectionMachine.State.READY -> R.string.state_ready
+            ConnectionMachine.State.CONNECTING -> R.string.state_connecting
+            ConnectionMachine.State.NO_QUAD -> R.string.state_no_quad
+            ConnectionMachine.State.RECONNECTING -> R.string.state_reconnecting
+            ConnectionMachine.State.UNAVAILABLE -> R.string.state_unavailable
+            ConnectionMachine.State.PLAYING -> null
+        }
     }
 
     private fun setSystemBarsVisible(visible: Boolean) {
@@ -307,5 +356,14 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val TICK_MS = 1000L
         private const val CONTROLS_TIMEOUT_MS = 3000L
+
+        /** states that show the spinner, being the ones waiting on something */
+        private val BUSY_STATES = setOf(
+            ConnectionMachine.State.SEARCHING,
+            ConnectionMachine.State.STREAM_DOWN,
+            ConnectionMachine.State.CONNECTING,
+            ConnectionMachine.State.NO_QUAD,
+            ConnectionMachine.State.RECONNECTING,
+        )
     }
 }
