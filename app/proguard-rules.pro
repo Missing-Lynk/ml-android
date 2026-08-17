@@ -1,21 +1,27 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# R8 rules.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Everything here exists because native code resolves these names at runtime, which R8 cannot
+# see. A missing rule does not fail the build: it fails on the device, at load or at first
+# play, which is why each rule below names what resolves it.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- our JNI peer ---------------------------------------------------------------------------
+# jni/gstplayer.c reaches into this class by name:
+#   JNI_OnLoad          FindClass("at/websium/ml/GStreamerPlayer") + RegisterNatives
+#   gst_native_class_init  GetFieldID(nativeCustomData), GetMethodID(onNativeState/onNativeLog)
+# onNativeState and onNativeLog are private and called only from C, so without a keep rule R8
+# reads them as dead code and deletes them. The class is small; keeping it whole costs nothing
+# and removes a whole class of runtime surprise.
+-keep class at.websium.ml.GStreamerPlayer { *; }
+-keep class at.websium.ml.GStreamerPlayer$Companion { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# --- the GStreamer SDK's Java side ----------------------------------------------------------
+# GStreamer.nativeInit is bound by the JNI name-mangling rules, so the package, class and method
+# names must survive verbatim. The androidmedia callbacks are instantiated from C by the
+# androidmedia plugin (hardware MediaCodec decode), again by name.
+-keep class org.freedesktop.gstreamer.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# --- readable crash reports -----------------------------------------------------------------
+# Keep line numbers so Play's crash reports deobfuscate against the uploaded mapping file, and
+# hide the original source file names.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

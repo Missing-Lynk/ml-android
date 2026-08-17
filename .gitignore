@@ -3,6 +3,9 @@
 .idea/
 .kotlin/
 local.properties
+keystore.properties
+*.jks
+*.keystore
 .DS_Store
 /build
 /captures

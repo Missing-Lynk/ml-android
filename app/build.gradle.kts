@@ -13,6 +13,16 @@ val localProps = Properties().apply {
 }
 val gstDir: String = localProps.getProperty("gst.dir") ?: "/home/chris/android-gst"
 
+// Upload-key details for a Play release, kept out of the repo. Create `keystore.properties`
+// next to this project with storeFile / storePassword / keyAlias / keyPassword to sign a
+// release build; without it the release build is simply left unsigned, so anyone can still
+// build and test the project.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasUploadKey = keystoreProps.getProperty("storeFile") != null
+
 android {
     namespace = "at.websium.ml"
     compileSdk {
@@ -33,9 +43,25 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasUploadKey) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+            // The JNI surface R8 cannot see is kept explicitly in proguard-rules.pro; a missing
+            // rule there fails on the device rather than in the build, so read that file before
+            // renaming anything the native side resolves by name.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
