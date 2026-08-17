@@ -42,9 +42,20 @@ typedef struct _CustomData
     gchar *uri;
     gint frame_count;          /* buffers reaching the sink (g_atomic); 0 => no media flowing */
     gint rebuild_count;        /* how many times the pipeline has been (re)built this session */
+    gint generation;           /* bumped by play(); see frame_probe_ctx */
+    pthread_t thread;          /* the GLib loop thread owning this instance's pipeline */
 } CustomData;
 
-static pthread_t gst_app_thread;
+/* Buffers from a previous pipeline can still reach its sink after play() has reset the count
+ * (the rebuild happens later, on the loop thread), which would let a dead session look like it
+ * is playing. Each pipeline's probe carries the generation it was built for and only counts
+ * while that is still current. */
+typedef struct _FrameProbeCtx
+{
+    CustomData *data;
+    gint generation;
+} FrameProbeCtx;
+
 static pthread_key_t current_jni_env;
 static JavaVM *java_vm;
 static jfieldID custom_data_field_id;
@@ -119,7 +130,12 @@ static void error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
     GError *err;
     gchar *debug;
     gst_message_parse_error(msg, &err, &debug);
-    LOGE("error from %s: %s", GST_OBJECT_NAME(msg->src), err->message);
+    /* the state code alone says only "it failed"; the message is what identifies a refused
+     * connection, a missing decoder or a broken SDP, so it goes to the shared log too */
+    gchar *line = g_strdup_printf("error from %s: %s", GST_OBJECT_NAME(msg->src), err->message);
+    LOGE("%s", line);
+    notify_log(data, line);
+    g_free(line);
     g_clear_error(&err);
     g_free(debug);
     /* do NOT touch the pipeline here; the app drives restarts via play() */
@@ -146,9 +162,16 @@ static void state_changed_cb(GstBus *bus, GstMessage *msg, CustomData *data)
 
 static GstPadProbeReturn frame_probe_cb(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
 {
-    CustomData *data = (CustomData *) user_data;
-    g_atomic_int_inc(&data->frame_count);
+    FrameProbeCtx *ctx = (FrameProbeCtx *) user_data;
+    if (g_atomic_int_get(&ctx->data->generation) == ctx->generation) {
+        g_atomic_int_inc(&ctx->data->frame_count);
+    }
     return GST_PAD_PROBE_OK;
+}
+
+static void frame_probe_ctx_free(gpointer user_data)
+{
+    g_free(user_data);
 }
 
 static void apply_overlay(CustomData *data)
@@ -230,7 +253,11 @@ static void build_pipeline(CustomData *data)
     if (data->video_sink != NULL) {
         GstPad *sinkpad = gst_element_get_static_pad(data->video_sink, "sink");
         if (sinkpad != NULL) {
-            gst_pad_add_probe(sinkpad, GST_PAD_PROBE_TYPE_BUFFER, frame_probe_cb, data, NULL);
+            FrameProbeCtx *ctx = g_new0(FrameProbeCtx, 1);
+            ctx->data = data;
+            ctx->generation = g_atomic_int_get(&data->generation);
+            gst_pad_add_probe(sinkpad, GST_PAD_PROBE_TYPE_BUFFER, frame_probe_cb, ctx,
+                              frame_probe_ctx_free);
             gst_object_unref(sinkpad);
         }
     }
@@ -284,7 +311,11 @@ static void gst_native_init(JNIEnv *env, jobject thiz)
     data->app = (*env)->NewGlobalRef(env, thiz);
     data->context = g_main_context_new();
     data->main_loop = g_main_loop_new(data->context, FALSE);
-    pthread_create(&gst_app_thread, NULL, &app_function, data);
+    /* the handle lives in CustomData, not a file-scope global: a second player would
+     * otherwise overwrite the first one's handle and finalize would join the wrong thread */
+    if (pthread_create(&data->thread, NULL, &app_function, data) != 0) {
+        LOGE("could not start the gst loop thread");
+    }
 }
 
 static void gst_native_finalize(JNIEnv *env, jobject thiz)
@@ -296,7 +327,7 @@ static void gst_native_finalize(JNIEnv *env, jobject thiz)
     if (data->main_loop != NULL) {
         g_main_loop_quit(data->main_loop);
     }
-    pthread_join(gst_app_thread, NULL);
+    pthread_join(data->thread, NULL);
     if (data->main_loop != NULL) {
         g_main_loop_unref(data->main_loop);
     }
@@ -330,6 +361,12 @@ static void gst_native_play(JNIEnv *env, jobject thiz)
     if (data == NULL) {
         return;
     }
+    /* Reset here rather than in do_rebuild: the app baselines the count the moment play()
+     * returns, and the rebuild only happens once the loop thread gets to it. Bumping the
+     * generation first retires the old pipeline's probe, so nothing it emits in between is
+     * counted. */
+    g_atomic_int_inc(&data->generation);
+    g_atomic_int_set(&data->frame_count, 0);
     notify_state(data, ST_CONNECTING);
     g_main_context_invoke(data->context, do_rebuild, data);
 }
@@ -405,8 +442,20 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
         LOGE("could not retrieve JNIEnv");
         return 0;
     }
+    /* a rename or an obfuscated build breaks this lookup; fail the load with a message
+     * naming the class instead of dereferencing NULL inside RegisterNatives */
     jclass klass = (*env)->FindClass(env, "at/websium/ml/GStreamerPlayer");
-    (*env)->RegisterNatives(env, klass, native_methods, G_N_ELEMENTS(native_methods));
+    if (klass == NULL) {
+        (*env)->ExceptionClear(env);
+        LOGE("class at/websium/ml/GStreamerPlayer not found; check the package name and any "
+             "ProGuard/R8 keep rules");
+        return 0;
+    }
+    if ((*env)->RegisterNatives(env, klass, native_methods, G_N_ELEMENTS(native_methods)) != 0) {
+        (*env)->ExceptionClear(env);
+        LOGE("RegisterNatives failed; the external declarations no longer match native_methods");
+        return 0;
+    }
     pthread_key_create(&current_jni_env, detach_current_thread);
     return JNI_VERSION_1_4;
 }
