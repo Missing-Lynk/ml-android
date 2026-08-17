@@ -26,9 +26,11 @@ import com.google.android.material.progressindicator.CircularProgressIndicator
 /**
  * Drives the connection state machine:
  *   SEARCHING (find goggle USB network) -> STREAM_DOWN (RTSP port closed) ->
- *   READY (Connect button) -> CONNECTING -> NO_QUAD (connected, no frames) /
- *   PLAYING (landscape video) -> RECONNECTING (frames stalled; "stay tuned" + auto-retry).
- * Losing the goggle network at any point drops back to SEARCHING.
+ *   CONNECTING -> NO_QUAD (connected, no frames) / PLAYING (landscape video) ->
+ *   RECONNECTING (frames stalled; "stay tuned" + auto-retry).
+ * A goggle answering on the RTSP port is connected to straight away. Disconnecting parks in
+ * READY, where the Connect button is the way back in; unplugging the goggle drops to
+ * SEARCHING and re-arms auto-connect.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -55,8 +57,13 @@ class MainActivity : AppCompatActivity() {
     private var lastFrameAtMs = 0L
     private var sessionStartMs = 0L
     private var lastPlayMs = 0L
+    private var lastSessionProbeMs = 0L
     @Volatile private var playerError = false
     private var foreground = true
+
+    // set when the user leaves a session, so the probe parks in READY instead of reconnecting
+    // straight away. Cleared when the goggle goes away and on a Connect tap.
+    private var userDisconnected = false
 
     private val sessionStates = setOf(St.CONNECTING, St.NO_QUAD, St.PLAYING, St.RECONNECTING)
     private val fullscreenStates = setOf(St.PLAYING, St.RECONNECTING)
@@ -162,6 +169,7 @@ class MainActivity : AppCompatActivity() {
     private fun step() {
         val net = link.goggleNetwork()
         if (net == null) {
+            userDisconnected = false
             if (state != St.SEARCHING) {
                 teardownPlayer()
                 setState(St.SEARCHING)
@@ -178,12 +186,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** probe the RTSP port; success -> READY, failure -> STREAM_DOWN (guarded internally) */
+    /** probe the RTSP port; success -> connect (or READY after a manual disconnect),
+     *  failure -> STREAM_DOWN (guarded internally) */
     private fun probeRtsp() {
         link.probeRtsp { up ->
-            if (state == St.SEARCHING || state == St.STREAM_DOWN) {
-                setState(if (up) St.READY else St.STREAM_DOWN)
+            if (state != St.SEARCHING && state != St.STREAM_DOWN) return@probeRtsp
+            when {
+                !up -> setState(St.STREAM_DOWN)
+                userDisconnected -> setState(St.READY)
+                else -> {
+                    Diag.log("conn", "RTSP up, connecting")
+                    connect()
+                }
             }
+        }
+    }
+
+    /** while a session has no media, re-check that the goggle still serves RTSP. A closed port
+     *  means the server went away (goggle reboot, stream switched off), so hand back to the
+     *  auto-connect path, which reconnects as soon as it answers again. */
+    private fun probeSessionAlive() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastSessionProbeMs < SESSION_PROBE_MS) return
+        lastSessionProbeMs = now
+        link.probeRtsp { up ->
+            // the probe takes up to its timeout, so re-check that media is still absent:
+            // frames may have started flowing while it was outstanding
+            if (up || state !in sessionStates || (player?.frameCount ?: 0) > 0) return@probeRtsp
+            Diag.log("conn", "RTSP port closed, waiting for the stream")
+            teardownPlayer()
+            setState(St.STREAM_DOWN)
         }
     }
 
@@ -196,6 +228,7 @@ class MainActivity : AppCompatActivity() {
             enterPlaying()
             return
         }
+        probeSessionAlive()
         val now = SystemClock.elapsedRealtime()
         val sinceRebuild = now - lastPlayMs
         if (playerError && sinceRebuild >= REBUILD_GAP_MS) {
@@ -226,8 +259,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connect() {
+        userDisconnected = false
         val p = ensurePlayer()
         sessionStartMs = SystemClock.elapsedRealtime()
+        lastSessionProbeMs = sessionStartMs
         setState(St.CONNECTING)
         startStream(p)
     }
@@ -255,8 +290,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun disconnect() {
+        val net = link.goggleNetwork()
+        userDisconnected = net != null
         teardownPlayer()
-        setState(if (link.goggleNetwork() != null) St.READY else St.SEARCHING)
+        setState(if (net != null) St.READY else St.SEARCHING)
     }
 
     // ---- player ----
@@ -364,6 +401,8 @@ class MainActivity : AppCompatActivity() {
         // PLAYING with no new frames -> RECONNECTING. Kept high: FPV feeds blip for a few
         // seconds (Tx-side link resets); only a real drop (battery swap) should reconnect.
         private const val STALL_MS = 8000L
+        // how often a session with no media re-checks that the RTSP port is still open
+        private const val SESSION_PROBE_MS = 5000L
         private const val CONTROLS_TIMEOUT_MS = 3000L
     }
 }

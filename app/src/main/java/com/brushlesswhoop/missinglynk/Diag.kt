@@ -38,9 +38,10 @@ object Diag {
         }
     }
 
-    fun read(): String =
-        file?.takeIf { it.exists() }?.runCatching { readText() }?.getOrNull()
-            ?: "(no diagnostics yet)"
+    /** the log's contents, or null when there is nothing to show (no Context here to resolve
+     *  a placeholder string; the caller supplies it) */
+    fun read(): String? =
+        file?.takeIf { it.exists() }?.runCatching { readText() }?.getOrNull()?.ifBlank { null }
 
     fun clear() {
         file?.runCatching { writeText("") }

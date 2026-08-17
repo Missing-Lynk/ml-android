@@ -39,7 +39,7 @@ class DiagnosticsActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        text.text = Diag.read()
+        text.text = Diag.read() ?: getString(R.string.diag_empty)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 

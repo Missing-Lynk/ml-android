@@ -1,6 +1,6 @@
 # ml-android
 
-Android companion app for the missinglynk goggle: plug the phone into the goggle over USB-C and watch the live FPV feed. The app plays the goggle's RTSP restream (`rtsp://192.168.3.100:554/venc8/stream`, H.265), served by ml-pipeline's built-in RTSP server and enabled via the goggle menu **DVR > RTSP Stream**.
+Android companion app for the missinglynk goggle: plug the phone into the goggle over USB-C and watch the live FPV feed. The app plays the goggle's RTSP restream (`rtsp://192.168.3.101:554/venc8/stream`, H.265), served by ml-pipeline's built-in RTSP server and enabled via the goggle menu **DVR > RTSP Stream**.
 
 ## How it connects
 
@@ -9,6 +9,8 @@ The goggle presents a USB-ethernet gadget (CDC-ECM) and hands the phone a DHCP l
 The stream URL is a preference (Settings), defaulting to the goggle's address. Playback is a GStreamer pipeline in native code (`rtspsrc ! rtph265depay ! h265parse ! decodebin ! glimagesink`), so the feed is H.265 end to end with no transcoding.
 
 States: waiting for the goggle (no matching network or RTSP not up yet), playing (fullscreen landscape), reconnecting (frames stalled; auto-retry). Short feed dropouts are ridden out without a reconnect: the RF link resets Tx-side for a few seconds routinely and the stream resumes on its own.
+
+Leaving a session (back, or the on-video back control) parks the app on a Connect button rather than reconnecting, so a deliberate disconnect sticks. Unplugging the goggle re-arms auto-connect for the next plug-in.
 
 ## Requirements
 
