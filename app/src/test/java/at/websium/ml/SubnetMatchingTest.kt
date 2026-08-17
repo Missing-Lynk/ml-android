@@ -7,12 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * How the app decides which of the phone's networks is the goggle: it derives a /24 prefix
- * from the configured stream host and matches interface addresses against it.
- *
- * [wifiOnTheSameSubnetAlsoMatches] pins CURRENT behaviour, not desired behaviour: the match
- * is address-only, so a phone whose WiFi is on 192.168.3.0/24 selects WiFi. When the
- * transport/interface filter lands, that test flips to asserting the goggle interface wins.
+ * The address primitives behind network selection: deriving a /24 prefix from the configured
+ * stream host, and testing an interface's addresses against it. Choosing between several
+ * networks that all match is [NetworkSelectionTest].
  */
 class SubnetMatchingTest {
 
@@ -90,10 +87,10 @@ class SubnetMatchingTest {
     }
 
     @Test
-    fun wifiOnTheSameSubnetAlsoMatches() {
-        // CURRENT behaviour, and the bug: nothing here distinguishes a USB-ethernet gadget
-        // from a home router that happens to use the same private range.
-        val homeWifiAddresses = listOf("192.168.3.42")
-        assertTrue(addressesMatch("192.168.3.", homeWifiAddresses))
+    fun anAddressMatchAloneDoesNotIdentifyTheGoggle() {
+        // true here is correct: this function only answers "is this address in the subnet".
+        // Home WiFi commonly is, which is why selection needs more than this (see
+        // NetworkSelectionTest.homeWifiOnTheSameSubnetIsRejected).
+        assertTrue(addressesMatch("192.168.3.", listOf("192.168.3.42")))
     }
 }

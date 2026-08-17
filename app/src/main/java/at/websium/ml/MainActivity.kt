@@ -160,7 +160,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun step() {
         val net = link.goggleNetwork()
-        if (net != null) link.bind(net)
+        link.bindTo(net)
         apply(
             machine.onTick(
                 ConnectionMachine.Tick(
