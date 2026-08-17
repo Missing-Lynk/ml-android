@@ -285,9 +285,9 @@ class MainActivity : AppCompatActivity() {
         // the setup hint is for a user who has no goggle or no stream yet
         statusHint.visibility = visibilityOf(waitingForGoggle)
 
-        val statusText = statusTextFor(state)
-        if (statusText != null) {
-            this.statusText.text = getString(statusText)
+        val statusTextRes = statusTextFor(state)
+        if (statusTextRes != null) {
+            statusText.text = getString(statusTextRes)
         }
 
         // show the video only while actually playing, so no frozen last frame leaks through
