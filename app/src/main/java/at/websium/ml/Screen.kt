@@ -10,6 +10,19 @@ import androidx.annotation.StringRes
 enum class Chrome { TOOLBAR, IMMERSIVE }
 
 /**
+ * The secondary line under the status text. One view carries both, and the two never apply in
+ * the same state: the setup pointer belongs to a screen with no player, the detail to a screen
+ * whose player has just failed.
+ */
+sealed interface Hint {
+    /** the fixed setup pointer, for a user with no goggle or no stream yet */
+    data class Copy(@StringRes val textResource: Int) : Hint
+
+    /** what the player said went wrong, shown while the next attempt runs */
+    data class Detail(val text: String) : Hint
+}
+
+/**
  * The status panel's contents, which exist only while the panel is showing. A spinner or a
  * status line with no panel behind it is therefore unrepresentable.
  */
@@ -17,7 +30,7 @@ data class StatusPanel(
     @StringRes val textResource: Int,
     val isSpinnerVisible: Boolean = false,
     val isImageVisible: Boolean = false,
-    val isHintVisible: Boolean = false,
+    val hint: Hint? = null,
     val isConnectVisible: Boolean = false,
 )
 
@@ -36,16 +49,19 @@ data class Screen(
 )
 
 /**
- * The one place that says what each state looks like.
+ * The one place that says what each state looks like. [failureReason] is the player's last
+ * complaint, which the states that are mid-attempt show under the status line.
  */
-fun screenFor(state: ConnectionMachine.State): Screen {
+fun screenFor(state: ConnectionMachine.State, failureReason: String? = null): Screen {
+    val detail = failureReason?.let { reason -> Hint.Detail(reason) }
+
     return when (state) {
         ConnectionMachine.State.SEARCHING -> Screen(
             chrome = Chrome.TOOLBAR,
             status = StatusPanel(
                 textResource = R.string.state_searching,
                 isSpinnerVisible = true,
-                isHintVisible = true,
+                hint = Hint.Copy(R.string.searching_hint),
             ),
             isInSession = false,
         )
@@ -55,7 +71,7 @@ fun screenFor(state: ConnectionMachine.State): Screen {
             status = StatusPanel(
                 textResource = R.string.state_stream_down,
                 isSpinnerVisible = true,
-                isHintVisible = true,
+                hint = Hint.Copy(R.string.searching_hint),
             ),
             isInSession = false,
         )
@@ -74,6 +90,7 @@ fun screenFor(state: ConnectionMachine.State): Screen {
             status = StatusPanel(
                 textResource = R.string.state_connecting,
                 isSpinnerVisible = true,
+                hint = detail,
             ),
             isInSession = true,
         )
@@ -83,6 +100,7 @@ fun screenFor(state: ConnectionMachine.State): Screen {
             status = StatusPanel(
                 textResource = R.string.state_no_air_unit,
                 isSpinnerVisible = true,
+                hint = detail,
             ),
             isInSession = true,
         )
@@ -99,6 +117,7 @@ fun screenFor(state: ConnectionMachine.State): Screen {
                 textResource = R.string.state_reconnecting,
                 isSpinnerVisible = true,
                 isImageVisible = true,
+                hint = detail,
             ),
             isInSession = true,
         )

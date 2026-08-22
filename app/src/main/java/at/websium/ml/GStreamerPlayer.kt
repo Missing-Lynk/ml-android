@@ -19,7 +19,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     // owned by the native side (a CustomData*); the name and type must match GetFieldID in the JNI
     private var nativeCustomData: Long = 0
 
-    override var onState: ((PlayerState) -> Unit)? = null
+    override var onEvent: ((PlayerEvent) -> Unit)? = null
 
     override val frameCount: Int get() = nativeFrameCount()
 
@@ -75,10 +75,11 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     }
 
     /**
-     * Invoked from the native GStreamer thread; MainActivity marshals onState to the UI.
+     * Invoked from the native GStreamer thread; MainActivity marshals onEvent to the UI.
+     * [reason] carries the error text and is null for every other state.
      */
-    private fun onNativeState(stateCode: Int) {
-        onState?.invoke(PlayerState.fromNative(stateCode))
+    private fun onNativeState(stateCode: Int, reason: String?) {
+        onEvent?.invoke(PlayerEvent.fromNative(stateCode, reason))
     }
 
     override fun onSurfaceTextureAvailable(

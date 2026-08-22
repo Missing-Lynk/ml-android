@@ -55,8 +55,10 @@ class ConnectionMachine {
      */
     data class Tick(
         val hasNetwork: Boolean,
+
         /** frames counted by the sink, or null when no player exists */
         val frameCount: Int?,
+
         /** false while the activity is stopped: stall detection pauses, the feed does not */
         val foreground: Boolean,
         val nowMs: Long,
@@ -71,6 +73,13 @@ class ConnectionMachine {
      */
     private var userDisconnected = false
     private var playerFailed = false
+
+    /**
+     * Why the last attempt failed, shown under the status line while the next one runs. Cleared
+     * when a session starts and when frames arrive.
+     */
+    var failureReason: String? = null
+        private set
 
     private var lastFrameCount = 0
     private var lastFrameAtMs = 0L
@@ -88,6 +97,7 @@ class ConnectionMachine {
             if (state == State.SEARCHING) {
                 return Step(state)
             }
+
             state = State.SEARCHING
             return Step(state, listOf(Effect.TeardownPlayer))
         }
@@ -110,14 +120,17 @@ class ConnectionMachine {
         if (state != State.SEARCHING && state != State.STREAM_DOWN) {
             return Step(state)
         }
+
         if (!portOpen) {
             state = State.STREAM_DOWN
             return Step(state)
         }
+
         if (userDisconnected) {
             state = State.READY
             return Step(state)
         }
+
         return connect(nowMs, Effect.Log("conn", "RTSP up, connecting"))
     }
 
@@ -130,6 +143,7 @@ class ConnectionMachine {
         if (portOpen || state !in SESSION_STATES || frameCount > 0) {
             return Step(state)
         }
+
         state = State.STREAM_DOWN
         return Step(
             state,
@@ -144,6 +158,7 @@ class ConnectionMachine {
         if (state == State.UNAVAILABLE) {
             return Step(state)
         }
+
         return connect(nowMs)
     }
 
@@ -162,21 +177,32 @@ class ConnectionMachine {
         if (state == State.UNAVAILABLE) {
             return Step(state)
         }
+
         userDisconnected = hasNetwork
         if (hasNetwork) {
             state = State.READY
         } else {
             state = State.SEARCHING
         }
+
         return Step(state, listOf(Effect.TeardownPlayer))
     }
 
     /**
-     * ERROR and ENDED both mean the current attempt failed.
+     * A failure and an end of stream both mean the current attempt is over. A failure also
+     * carries what went wrong.
      */
-    fun onPlayerState(playerState: PlayerState) {
-        if (playerState == PlayerState.ERROR || playerState == PlayerState.ENDED) {
-            playerFailed = true
+    fun onPlayerEvent(event: PlayerEvent) {
+        when (event) {
+            is PlayerEvent.Failed -> {
+                playerFailed = true
+                failureReason = event.reason
+            }
+            PlayerEvent.Ended -> {
+                playerFailed = true
+            }
+            PlayerEvent.Connecting, PlayerEvent.Playing -> {
+            }
         }
     }
 
@@ -190,9 +216,12 @@ class ConnectionMachine {
         if (frames == null) {
             return Step(state)
         }
+
         if (frames > 0) {
             resetFrameTracking(frames, tick.nowMs)
+            failureReason = null
             state = State.PLAYING
+
             return Step(state)
         }
 
@@ -216,6 +245,7 @@ class ConnectionMachine {
         if (state == State.CONNECTING && tick.nowMs - sessionStartMs > NO_VIDEO_MS) {
             state = State.NO_AIR_UNIT
         }
+
         return Step(state, effects)
     }
 
@@ -227,11 +257,13 @@ class ConnectionMachine {
         if (frames == null) {
             return Step(state)
         }
+
         if (frames != lastFrameCount) {
             lastFrameCount = frames
             lastFrameAtMs = tick.nowMs
             return Step(state)
         }
+
         if (!tick.foreground || tick.nowMs - lastFrameAtMs <= STALL_MS) {
             return Step(state)
         }
@@ -248,6 +280,7 @@ class ConnectionMachine {
 
     private fun connect(nowMs: Long, vararg leadingEffects: Effect): Step {
         userDisconnected = false
+        failureReason = null
         sessionStartMs = nowMs
         lastSessionProbeMs = nowMs
         state = State.CONNECTING

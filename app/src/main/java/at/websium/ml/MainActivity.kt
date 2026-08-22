@@ -238,6 +238,7 @@ class MainActivity : AppCompatActivity() {
         if (existing != null) {
             return existing
         }
+
         /*
          * Throwable, not Exception: GStreamer.init declares a checked Exception, but the
          * companion's System.loadLibrary raises UnsatisfiedLinkError, which arrives wrapped in
@@ -246,8 +247,8 @@ class MainActivity : AppCompatActivity() {
         return try {
             val created = GStreamerPlayer(this)
             created.attachTo(videoContainer)
-            created.onState = { playerState ->
-                runOnUiThread { machine.onPlayerState(playerState) }
+            created.onEvent = { event ->
+                runOnUiThread { machine.onPlayerEvent(event) }
             }
             player = created
             created
@@ -269,7 +270,7 @@ class MainActivity : AppCompatActivity() {
             Diagnostics.log("state", "$rendered -> $state")
         }
         rendered = state
-        screen = screenFor(state)
+        screen = screenFor(state, machine.failureReason)
         applyScreen(screen)
     }
 
@@ -285,10 +286,18 @@ class MainActivity : AppCompatActivity() {
         progress.visibility = visibilityOf(status?.isSpinnerVisible == true)
         connectButton.visibility = visibilityOf(status?.isConnectVisible == true)
         statusImage.visibility = visibilityOf(status?.isImageVisible == true)
-        statusHint.visibility = visibilityOf(status?.isHintVisible == true)
 
         if (status != null) {
             statusText.text = getString(status.textResource)
+        }
+
+        val hint = status?.hint
+        statusHint.visibility = visibilityOf(hint != null)
+        when (hint) {
+            is Hint.Copy -> statusHint.setText(hint.textResource)
+            is Hint.Detail -> statusHint.text = hint.text
+            null -> {
+            }
         }
 
         // show the video only while actually playing, so no frozen last frame leaks through

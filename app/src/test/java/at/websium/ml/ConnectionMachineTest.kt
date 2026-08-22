@@ -178,7 +178,7 @@ class ConnectionMachineTest {
     @Test
     fun aFailedAttemptIsRebuiltAfterTheDebounce() {
         autoConnect()
-        machine.onPlayerState(PlayerState.ERROR)
+        machine.onPlayerEvent(PlayerEvent.Failed("refused"))
 
         assertFalse(tick(3999, frames = 0).effects.contains(Effect.StartStream))
         assertTrue(tick(4000, frames = 0).effects.contains(Effect.StartStream))
@@ -187,14 +187,14 @@ class ConnectionMachineTest {
     @Test
     fun anEndedStreamCountsAsAFailedAttempt() {
         autoConnect()
-        machine.onPlayerState(PlayerState.ENDED)
+        machine.onPlayerEvent(PlayerEvent.Ended)
         assertTrue(tick(4000, frames = 0).effects.contains(Effect.StartStream))
     }
 
     @Test
     fun aRebuiltAttemptIsGivenTheFullDebounceAgain() {
         autoConnect()
-        machine.onPlayerState(PlayerState.ERROR)
+        machine.onPlayerEvent(PlayerEvent.Failed("refused"))
         // rebuilt, so the error is consumed
         tick(4000, frames = 0)
         assertFalse(tick(5000, frames = 0).effects.contains(Effect.StartStream))

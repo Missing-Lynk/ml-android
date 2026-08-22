@@ -24,7 +24,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-/* state codes shared with Kotlin (mapped to PlayerState there) */
+/* state codes shared with Kotlin (mapped to PlayerEvent there) */
 #define ST_CONNECTING 0
 #define ST_PLAYING    1
 #define ST_ERROR      2
@@ -94,13 +94,25 @@ static JNIEnv *get_jni_env(void)
     return env;
 }
 
-static void notify_state(CustomData *data, int state)
+/* the state code alone says only "it failed"; reason carries what identifies the failure
+ * (a refused connection, a missing decoder, a broken SDP) and is NULL for every other state. */
+static void notify_state(CustomData *data, int state, const char *reason)
 {
     JNIEnv *env = get_jni_env();
     if (data->app == NULL || on_state_method_id == NULL) {
         return;
     }
-    (*env)->CallVoidMethod(env, data->app, on_state_method_id, state);
+
+    jstring s = NULL;
+    if (reason != NULL) {
+        s = (*env)->NewStringUTF(env, reason);
+    }
+
+    (*env)->CallVoidMethod(env, data->app, on_state_method_id, state, s);
+    if (s != NULL) {
+        (*env)->DeleteLocalRef(env, s);
+    }
+
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
     }
@@ -115,6 +127,7 @@ static void notify_log(CustomData *data, const char *msg)
     if (data->app == NULL || on_log_method_id == NULL) {
         return;
     }
+
     jstring s = (*env)->NewStringUTF(env, msg);
     (*env)->CallVoidMethod(env, data->app, on_log_method_id, s);
     (*env)->DeleteLocalRef(env, s);
@@ -130,22 +143,24 @@ static void error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
     GError *err;
     gchar *debug;
     gst_message_parse_error(msg, &err, &debug);
+
     /* the state code alone says only "it failed"; the message is what identifies a refused
      * connection, a missing decoder or a broken SDP, so it goes to the shared log too */
     gchar *line = g_strdup_printf("error from %s: %s", GST_OBJECT_NAME(msg->src), err->message);
     LOGE("%s", line);
     notify_log(data, line);
+
+    /* do NOT touch the pipeline here; the app drives restarts via play() */
+    notify_state(data, ST_ERROR, line);
     g_free(line);
     g_clear_error(&err);
     g_free(debug);
-    /* do NOT touch the pipeline here; the app drives restarts via play() */
-    notify_state(data, ST_ERROR);
 }
 
 static void eos_cb(GstBus *bus, GstMessage *msg, CustomData *data)
 {
     LOGI("end of stream");
-    notify_state(data, ST_ENDED);
+    notify_state(data, ST_ENDED, NULL);
 }
 
 static void state_changed_cb(GstBus *bus, GstMessage *msg, CustomData *data)
@@ -154,9 +169,10 @@ static void state_changed_cb(GstBus *bus, GstMessage *msg, CustomData *data)
     if (GST_MESSAGE_SRC(msg) != GST_OBJECT(data->pipeline)) {
         return;
     }
+
     gst_message_parse_state_changed(msg, &old_state, &new_state, &pending_state);
     if (new_state == GST_STATE_PLAYING) {
-        notify_state(data, ST_PLAYING);
+        notify_state(data, ST_PLAYING, NULL);
     }
 }
 
@@ -166,6 +182,7 @@ static GstPadProbeReturn frame_probe_cb(GstPad *pad, GstPadProbeInfo *info, gpoi
     if (g_atomic_int_get(&ctx->data->generation) == ctx->generation) {
         g_atomic_int_inc(&ctx->data->frame_count);
     }
+
     return GST_PAD_PROBE_OK;
 }
 
@@ -179,6 +196,7 @@ static void apply_overlay(CustomData *data)
     if (data->video_sink == NULL || data->native_window == NULL) {
         return;
     }
+
     gst_video_overlay_set_window_handle(
         GST_VIDEO_OVERLAY(data->video_sink), (guintptr) data->native_window);
     gst_video_overlay_expose(GST_VIDEO_OVERLAY(data->video_sink));
@@ -193,6 +211,7 @@ static void deep_element_added_cb(GstBin *pipeline, GstBin *sub_bin, GstElement 
     if (factory == NULL) {
         return;
     }
+
     const gchar *klass = gst_element_factory_get_klass(factory);
     if (klass != NULL && strstr(klass, "Decoder") != NULL && strstr(klass, "Video") != NULL) {
         const gchar *name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
@@ -213,15 +232,18 @@ static void teardown_pipeline(CustomData *data)
         g_source_unref(data->bus_source);
         data->bus_source = NULL;
     }
+
     if (data->video_sink != NULL) {
         gst_object_unref(data->video_sink);
         data->video_sink = NULL;
     }
+
     if (data->pipeline != NULL) {
         gst_element_set_state(data->pipeline, GST_STATE_NULL);
         gst_object_unref(data->pipeline);
         data->pipeline = NULL;
     }
+
     g_atomic_int_set(&data->frame_count, 0);
 }
 
@@ -230,6 +252,7 @@ static void build_pipeline(CustomData *data)
     if (data->uri == NULL) {
         return;
     }
+
     gchar *desc = g_strdup_printf(
         "rtspsrc location=%s latency=100 ! rtph265depay ! h265parse ! "
         "decodebin ! glimagesink name=vsink sync=false",
@@ -241,7 +264,7 @@ static void build_pipeline(CustomData *data)
     if (error != NULL) {
         LOGE("pipeline parse error: %s", error->message);
         g_clear_error(&error);
-        notify_state(data, ST_ERROR);
+        notify_state(data, ST_ERROR, "pipeline parse error");
         return;
     }
 
@@ -285,6 +308,7 @@ static gboolean do_rebuild(gpointer user_data)
         g_free(msg);
         gst_element_set_state(data->pipeline, GST_STATE_PLAYING);
     }
+
     return G_SOURCE_REMOVE;
 }
 
@@ -295,10 +319,13 @@ static void *app_function(void *userdata)
     CustomData *data = (CustomData *) userdata;
     g_main_context_push_thread_default(data->context);
     LOGI("gst main loop running");
+
     g_main_loop_run(data->main_loop);
     LOGI("gst main loop exiting");
+
     teardown_pipeline(data);
     g_main_context_pop_thread_default(data->context);
+
     return NULL;
 }
 
@@ -324,19 +351,24 @@ static void gst_native_finalize(JNIEnv *env, jobject thiz)
     if (data == NULL) {
         return;
     }
+
     if (data->main_loop != NULL) {
         g_main_loop_quit(data->main_loop);
     }
+
     pthread_join(data->thread, NULL);
     if (data->main_loop != NULL) {
         g_main_loop_unref(data->main_loop);
     }
+
     if (data->context != NULL) {
         g_main_context_unref(data->context);
     }
+
     if (data->native_window != NULL) {
         ANativeWindow_release(data->native_window);
     }
+
     (*env)->DeleteGlobalRef(env, data->app);
     g_free(data->uri);
     g_free(data);
@@ -349,6 +381,7 @@ static void gst_native_set_uri(JNIEnv *env, jobject thiz, jstring uri)
     if (data == NULL) {
         return;
     }
+
     const gchar *s = (*env)->GetStringUTFChars(env, uri, NULL);
     g_free(data->uri);
     data->uri = g_strdup(s);
@@ -361,13 +394,14 @@ static void gst_native_play(JNIEnv *env, jobject thiz)
     if (data == NULL) {
         return;
     }
+
     /* Reset here rather than in do_rebuild: the app baselines the count the moment play()
      * returns, and the rebuild only happens once the loop thread gets to it. Bumping the
      * generation first retires the old pipeline's probe, so nothing it emits in between is
      * counted. */
     g_atomic_int_inc(&data->generation);
     g_atomic_int_set(&data->frame_count, 0);
-    notify_state(data, ST_CONNECTING);
+    notify_state(data, ST_CONNECTING, NULL);
     g_main_context_invoke(data->context, do_rebuild, data);
 }
 
@@ -379,10 +413,12 @@ static void gst_native_surface_init(JNIEnv *env, jobject thiz, jobject surface)
     if (data == NULL) {
         return;
     }
+
     ANativeWindow *new_window = ANativeWindow_fromSurface(env, surface);
     if (data->native_window != NULL) {
         ANativeWindow_release(data->native_window);
     }
+
     data->native_window = new_window;
     apply_overlay(data);
 }
@@ -393,9 +429,11 @@ static void gst_native_surface_finalize(JNIEnv *env, jobject thiz)
     if (data == NULL) {
         return;
     }
+
     if (data->video_sink != NULL) {
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(data->video_sink), (guintptr) NULL);
     }
+
     if (data->native_window != NULL) {
         ANativeWindow_release(data->native_window);
         data->native_window = NULL;
@@ -408,18 +446,21 @@ static jint gst_native_frame_count(JNIEnv *env, jobject thiz)
     if (data == NULL) {
         return 0;
     }
+
     return (jint) g_atomic_int_get(&data->frame_count);
 }
 
 static jboolean gst_native_class_init(JNIEnv *env, jclass klass)
 {
     custom_data_field_id = (*env)->GetFieldID(env, klass, "nativeCustomData", "J");
-    on_state_method_id = (*env)->GetMethodID(env, klass, "onNativeState", "(I)V");
+    on_state_method_id =
+        (*env)->GetMethodID(env, klass, "onNativeState", "(ILjava/lang/String;)V");
     on_log_method_id = (*env)->GetMethodID(env, klass, "onNativeLog", "(Ljava/lang/String;)V");
     if (custom_data_field_id == NULL || on_state_method_id == NULL || on_log_method_id == NULL) {
         LOGE("GStreamerPlayer is missing nativeCustomData / onNativeState / onNativeLog");
         return JNI_FALSE;
     }
+
     return JNI_TRUE;
 }
 
@@ -442,6 +483,7 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
         LOGE("could not retrieve JNIEnv");
         return 0;
     }
+
     /* a rename or an obfuscated build breaks this lookup; fail the load with a message
      * naming the class instead of dereferencing NULL inside RegisterNatives */
     jclass klass = (*env)->FindClass(env, "at/websium/ml/GStreamerPlayer");
@@ -451,11 +493,13 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
              "ProGuard/R8 keep rules");
         return 0;
     }
+
     if ((*env)->RegisterNatives(env, klass, native_methods, G_N_ELEMENTS(native_methods)) != 0) {
         (*env)->ExceptionClear(env);
         LOGE("RegisterNatives failed; the external declarations no longer match native_methods");
         return 0;
     }
+
     pthread_key_create(&current_jni_env, detach_current_thread);
     return JNI_VERSION_1_4;
 }

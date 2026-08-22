@@ -2,6 +2,7 @@ package at.websium.ml
 
 import at.websium.ml.ConnectionMachine.State
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -18,7 +19,7 @@ class ScreenTest {
                 status = StatusPanel(
                     textResource = R.string.state_searching,
                     isSpinnerVisible = true,
-                    isHintVisible = true,
+                    hint = Hint.Copy(R.string.searching_hint),
                 ),
                 isInSession = false,
             ),
@@ -34,7 +35,7 @@ class ScreenTest {
                 status = StatusPanel(
                     textResource = R.string.state_stream_down,
                     isSpinnerVisible = true,
-                    isHintVisible = true,
+                    hint = Hint.Copy(R.string.searching_hint),
                 ),
                 isInSession = false,
             ),
@@ -121,6 +122,52 @@ class ScreenTest {
             ),
             screenFor(State.UNAVAILABLE),
         )
+    }
+
+    // ---- the player's complaint, shown while the next attempt runs ----
+
+    @Test
+    fun aMidAttemptScreenShowsWhyTheLastAttemptFailed() {
+        val reason = "error from rtspsrc0: Could not open resource for reading."
+        assertEquals(
+            Hint.Detail(reason),
+            screenFor(State.CONNECTING, reason).status?.hint,
+        )
+        assertEquals(
+            Hint.Detail(reason),
+            screenFor(State.NO_AIR_UNIT, reason).status?.hint,
+        )
+        assertEquals(
+            Hint.Detail(reason),
+            screenFor(State.RECONNECTING, reason).status?.hint,
+        )
+    }
+
+    @Test
+    fun aScreenWithNoPlayerKeepsTheSetupPointer() {
+        // SEARCHING and STREAM_DOWN have torn the player down, so a stale reason must not show
+        val reason = "error from rtspsrc0: Could not open resource for reading."
+        assertEquals(
+            Hint.Copy(R.string.searching_hint),
+            screenFor(State.SEARCHING, reason).status?.hint,
+        )
+        assertEquals(
+            Hint.Copy(R.string.searching_hint),
+            screenFor(State.STREAM_DOWN, reason).status?.hint,
+        )
+    }
+
+    @Test
+    fun statesWithNothingToSayShowNoHint() {
+        val reason = "error from rtspsrc0: Could not open resource for reading."
+        assertNull(screenFor(State.READY, reason).status?.hint)
+        assertNull(screenFor(State.UNAVAILABLE, reason).status?.hint)
+    }
+
+    @Test
+    fun noFailureLeavesTheMidAttemptScreensBare() {
+        assertNull(screenFor(State.CONNECTING).status?.hint)
+        assertNull(screenFor(State.RECONNECTING).status?.hint)
     }
 
     // ---- rules that hold across the whole table ----
