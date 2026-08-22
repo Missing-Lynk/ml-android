@@ -1,11 +1,11 @@
 package at.websium.ml
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.preference.PreferenceManager
@@ -14,22 +14,6 @@ import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-
-/**
- * The host's subnet as a dotted prefix: "192.168.3.101" gives "192.168.3.". Null when the host
- * is not a dotted address (a name, an IPv6 literal, a bare label), since there is then no
- * prefix to match interfaces against.
- */
-internal fun subnetPrefix(host: String?): String? {
-    if (host == null) {
-        return null
-    }
-    val lastDot = host.lastIndexOf('.')
-    if (lastDot <= 0) {
-        return null
-    }
-    return host.substring(0, lastDot + 1)
-}
 
 /**
  * Whether any of an interface's addresses sits in [prefix]'s subnet. The dot terminating the
@@ -94,7 +78,7 @@ internal fun <T> pickGoggle(
 }
 
 /**
- * The goggle's USB link: the configured stream URL, finding and binding the USB-ethernet
+ * The goggle's USB link: the configured [StreamEndpoint], finding and binding the USB-ethernet
  * Network it lives on, and probing whether the RTSP server is up. Keeps this plumbing out of
  * the Activity. Construct with an Activity or Context; call [shutdown] when done.
  *
@@ -102,12 +86,30 @@ internal fun <T> pickGoggle(
  * platform's own advice against `getAllNetworks` is that polling it is inefficient and prone
  * to race conditions.
  */
-class GoggleLink(private val context: Context) {
+class GoggleLink(context: Context) {
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val probeExecutor = Executors.newSingleThreadExecutor()
     private val mainThread = Handler(Looper.getMainLooper())
     private var probeInFlight = false
+
+    private val preferences = PreferenceManager.getDefaultSharedPreferences(context)
+    private val urlKey = context.getString(R.string.pref_url_key)
+    private val defaultUrl = context.getString(R.string.default_rtsp_url)
+
+    /** reparsed when Settings changes the URL, so the per-tick path reads a field */
+    @Volatile
+    private var endpoint: StreamEndpoint? = readEndpoint()
+
+    /*
+     * Held in a field because SharedPreferences keeps only a weak reference to a listener; an
+     * anonymous one passed straight to register() is collected and stops firing.
+     */
+    private val urlListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == urlKey) {
+            endpoint = readEndpoint()
+        }
+    }
 
     /** written from the callback thread, read from the main thread */
     private val networks: MutableSet<Network> =
@@ -138,23 +140,27 @@ class GoggleLink(private val context: Context) {
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
             .build()
         connectivity?.registerNetworkCallback(request, networkCallback)
+        preferences.registerOnSharedPreferenceChangeListener(urlListener)
+    }
+
+    private fun readEndpoint(): StreamEndpoint? {
+        val stored = preferences.getString(urlKey, defaultUrl) ?: defaultUrl
+        return StreamEndpoint.parse(stored)
     }
 
     /**
-     * The configured RTSP URL, which the user can change in Settings.
+     * The configured stream URL and what the link derives from it. Null when the URL carries no
+     * host, which leaves nothing to look for and nothing to probe.
      */
-    fun streamUrl(): String {
-        val fallback = context.getString(R.string.default_rtsp_url)
-        val stored = PreferenceManager.getDefaultSharedPreferences(context)
-            .getString(context.getString(R.string.pref_url_key), fallback)
-        return stored ?: fallback
+    fun endpoint(): StreamEndpoint? {
+        return endpoint
     }
 
     /**
      * The local Network that carries the goggle, or null when it is not attached.
      */
     fun goggleNetwork(): Network? {
-        val prefix = subnetPrefix(Uri.parse(streamUrl()).host)
+        val prefix = endpoint?.subnetPrefix
         if (prefix == null) {
             return null
         }
@@ -199,20 +205,15 @@ class GoggleLink(private val context: Context) {
         if (probeInFlight) {
             return
         }
-        val uri = Uri.parse(streamUrl())
-        val host = uri.host
-        if (host == null) {
+        val target = endpoint
+        if (target == null) {
             return
-        }
-        val port = when {
-            uri.port > 0 -> uri.port
-            else -> RTSP_PORT
         }
         probeInFlight = true
         probeExecutor.execute {
             val portOpen = try {
                 Socket().use { socket ->
-                    socket.connect(InetSocketAddress(host, port), PROBE_TIMEOUT_MS)
+                    socket.connect(InetSocketAddress(target.host, target.port), PROBE_TIMEOUT_MS)
                     true
                 }
             } catch (_: Exception) {
@@ -228,11 +229,11 @@ class GoggleLink(private val context: Context) {
     fun shutdown() {
         bindTo(null)
         connectivity?.unregisterNetworkCallback(networkCallback)
+        preferences.unregisterOnSharedPreferenceChangeListener(urlListener)
         probeExecutor.shutdownNow()
     }
 
     private companion object {
-        private const val RTSP_PORT = 554
         private const val PROBE_TIMEOUT_MS = 2000
     }
 }

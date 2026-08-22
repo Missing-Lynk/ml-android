@@ -198,7 +198,7 @@ class MainActivity : AppCompatActivity() {
                     teardownPlayer()
                 }
                 ConnectionMachine.Effect.StartStream -> {
-                    player?.play(link.streamUrl())
+                    link.endpoint()?.let { target -> player?.play(target.url) }
                 }
                 ConnectionMachine.Effect.Probe -> {
                     link.probeRtsp { portOpen ->
