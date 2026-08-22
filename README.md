@@ -1,20 +1,23 @@
 # ml-android
 
-Android companion app for the missinglynk goggle: plug the phone into the goggle over USB-C and watch the live FPV feed. The app plays the goggle's RTSP restream (`rtsp://192.168.3.101:554/venc8/stream`, H.265), served by ml-pipeline's built-in RTSP server and enabled via the goggle menu **DVR > RTSP Stream**.
+Android companion app for the MissingLynk goggle: plug the phone into the goggle over USB-C and watch the live FPV feed. The app plays the goggle's RTSP restream (`rtsp://192.168.3.101:554/venc8/stream`, H.265), served by ml-pipeline's built-in RTSP server and enabled via the goggle menu **DVR > RTSP Stream**.
 
 ## How it connects
 
-The goggle presents a USB-ethernet gadget (CDC-ECM) and hands the phone a DHCP lease on the gadget subnet (192.168.3.123/24 on the goggle profile). The app scans the phone's networks for an interface on the stream URL's /24, binds its sockets to that network (so the phone's WiFi/mobile data stay untouched for everything else), probes the RTSP port, and starts playing when the goggle answers. No pairing, no configuration: plug in, open the app.
+The goggle presents a USB-ethernet gadget (CDC-ECM) and hands the phone a DHCP lease on the gadget subnet (192.168.3.123/24 on the goggle profile). The app looks for the gadget among the phone's networks, matching both the stream URL's /24 and an ethernet transport or a `usb`/`eth`/`rndis`/`ncm` interface name, so a home WiFi network on the same 192.168.x range is passed over. It binds its sockets to the gadget alone, leaving WiFi and mobile data to serve everything else on the phone, probes the RTSP port, and starts playing when the goggle answers. No pairing, no configuration: plug in, open the app.
 
 The stream URL is a preference (Settings), defaulting to the goggle's address. Playback is a GStreamer pipeline in native code (`rtspsrc ! rtph265depay ! h265parse ! decodebin ! glimagesink`), so the feed is H.265 end to end with no transcoding.
 
-States: waiting for the goggle (no matching network or RTSP not up yet), playing (fullscreen landscape), reconnecting (frames stalled; auto-retry). Short feed dropouts are ridden out without a reconnect: the RF link resets Tx-side for a few seconds routinely and the stream resumes on its own.
+States: waiting for the goggle (no matching network, or the RTSP server not up yet), connecting, no video (connected for seven seconds with nothing arriving, so the air unit is the thing to check), playing (fullscreen landscape), and reconnecting (frames stalled; auto-retry). Short feed dropouts are ridden out without a reconnect: the RF link resets Tx-side for a few seconds routinely and the stream resumes on its own. When an attempt fails outright, the screen carries the player's own reason underneath, which separates a refused connection from a missing decoder.
 
-Leaving a session (back, or the on-video back control) parks the app on a Connect button rather than reconnecting, so a deliberate disconnect sticks. Unplugging the goggle re-arms auto-connect for the next plug-in.
+Leaving a session (back, or the on-video back control) parks the app on a Connect button, so a deliberate disconnect sticks. Unplugging the goggle re-arms auto-connect for the next plug-in.
+
+**Diagnostics** in the menu holds an on-device log of the session: the decoder that was chosen, pipeline rebuilds, stream errors and state transitions. Share exports it, which is the useful thing to attach to a bug report.
 
 ## Requirements
 
-- The goggle connected over USB-C, with the air unit powered and transmitting (the RTSP server has no media to describe without a live feed).
+- The goggle connected with a USB-A to USB-C OTG adapter. A plain USB-C to USB-C cable does not work, since the phone has to act as the USB host.
+- The air unit powered and transmitting (the RTSP server has no media to describe without a live feed).
 - **DVR > RTSP Stream** enabled in the goggle menu.
 - Android 7.0+ (minSdk 24), arm64 device.
 
@@ -34,7 +37,7 @@ Leaving a session (back, or the on-video back control) parks the app on a Connec
    ./gradlew installDebug
    ```
 
-The native player (`app/src/main/jni/gstplayer.c`) is built by ndk-build against the GStreamer prebuilts; only `arm64-v8a` is shipped to keep the static-plugin payload sane.
+The native player (`app/src/main/jni/gstplayer.c`) is built by ndk-build against the GStreamer prebuilts. Only `arm64-v8a` is shipped, since the statically linked plugins cost several megabytes per ABI; the release bundle lands around 14 MB.
 
 ## Support
 
