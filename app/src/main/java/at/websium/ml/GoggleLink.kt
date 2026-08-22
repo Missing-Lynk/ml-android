@@ -97,6 +97,9 @@ class GoggleLink(context: Context) {
     private val urlKey = context.getString(R.string.pref_url_key)
     private val defaultUrl = context.getString(R.string.default_rtsp_url)
 
+    /** latched so a URL that stays broken is reported once, and again after it is fixed */
+    private var hasWarnedAboutUrl = false
+
     /** reparsed when Settings changes the URL, so the per-tick path reads a field */
     @Volatile
     private var endpoint: StreamEndpoint? = readEndpoint()
@@ -143,9 +146,22 @@ class GoggleLink(context: Context) {
         preferences.registerOnSharedPreferenceChangeListener(urlListener)
     }
 
+    /**
+     * A URL with no host reads to the rest of the app exactly like an absent goggle, so it is
+     * reported here; otherwise a typo in Settings looks like nothing being plugged in.
+     */
     private fun readEndpoint(): StreamEndpoint? {
         val stored = preferences.getString(urlKey, defaultUrl) ?: defaultUrl
-        return StreamEndpoint.parse(stored)
+        val parsed = StreamEndpoint.parse(stored)
+        if (parsed == null) {
+            if (!hasWarnedAboutUrl) {
+                hasWarnedAboutUrl = true
+                Diagnostics.log("link", "stream URL has no host, nothing to look for: $stored")
+            }
+        } else {
+            hasWarnedAboutUrl = false
+        }
+        return parsed
     }
 
     /**
