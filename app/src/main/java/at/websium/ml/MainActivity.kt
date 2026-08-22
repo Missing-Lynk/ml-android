@@ -15,7 +15,6 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
-import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -56,11 +55,11 @@ class MainActivity : AppCompatActivity() {
     /** the state the views currently show; rendering is skipped while it matches the machine */
     private var rendered: ConnectionMachine.State? = null
 
+    /** what the views currently show, so tap handling reads the value instead of re-deriving it */
+    private var screen: Screen = screenFor(ConnectionMachine.State.SEARCHING)
+
     private val ticker = Handler(Looper.getMainLooper())
     private var foreground = true
-
-    private val fullscreenStates =
-        setOf(ConnectionMachine.State.PLAYING, ConnectionMachine.State.RECONNECTING)
 
     private val leaveSession = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
@@ -270,40 +269,42 @@ class MainActivity : AppCompatActivity() {
             Diagnostics.log("state", "$rendered -> $state")
         }
         rendered = state
+        screen = screenFor(state)
+        applyScreen(screen)
+    }
 
-        val playing = state == ConnectionMachine.State.PLAYING
-        val fullscreen = state in fullscreenStates
-        val inSession = state in ConnectionMachine.SESSION_STATES
-        val waitingForGoggle = state == ConnectionMachine.State.SEARCHING ||
-            state == ConnectionMachine.State.STREAM_DOWN
+    /**
+     * Write [screen] to the views. Every decision was taken in [screenFor]; this assigns.
+     */
+    private fun applyScreen(screen: Screen) {
+        val immersive = screen.chrome == Chrome.IMMERSIVE
+        val status = screen.status
 
-        toolbar.visibility = visibilityOf(!fullscreen)
-        statusPanel.visibility = visibilityOf(!playing)
-        progress.visibility = visibilityOf(state in BUSY_STATES)
-        connectButton.visibility = visibilityOf(state == ConnectionMachine.State.READY)
-        statusImage.visibility = visibilityOf(state == ConnectionMachine.State.RECONNECTING)
-        // the setup hint is for a user who has no goggle or no stream yet
-        statusHint.visibility = visibilityOf(waitingForGoggle)
+        toolbar.visibility = visibilityOf(!immersive)
+        statusPanel.visibility = visibilityOf(status != null)
+        progress.visibility = visibilityOf(status?.isSpinnerVisible == true)
+        connectButton.visibility = visibilityOf(status?.isConnectVisible == true)
+        statusImage.visibility = visibilityOf(status?.isImageVisible == true)
+        statusHint.visibility = visibilityOf(status?.isHintVisible == true)
 
-        val statusTextRes = statusTextFor(state)
-        if (statusTextRes != null) {
-            statusText.text = getString(statusTextRes)
+        if (status != null) {
+            statusText.text = getString(status.textResource)
         }
 
         // show the video only while actually playing, so no frozen last frame leaks through
-        player?.setVideoVisible(playing)
+        player?.setVideoVisible(status == null)
 
         // the fullscreen back control is only shown transiently on tap
         ticker.removeCallbacks(hideFullscreenBack)
         fullscreenBack.visibility = View.GONE
 
         requestedOrientation = when {
-            fullscreen -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            immersive -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
 
-        setSystemBarsVisible(!fullscreen)
-        leaveSession.isEnabled = inSession
+        setSystemBarsVisible(!immersive)
+        leaveSession.isEnabled = screen.isInSession
     }
 
     private fun visibilityOf(visible: Boolean): Int {
@@ -317,29 +318,12 @@ class MainActivity : AppCompatActivity() {
      * Tap to reveal the back control while fullscreen; it hides itself again.
      */
     private fun revealFullscreenBack() {
-        if (rendered !in fullscreenStates) {
+        if (screen.chrome != Chrome.IMMERSIVE) {
             return
         }
         fullscreenBack.visibility = View.VISIBLE
         ticker.removeCallbacks(hideFullscreenBack)
         ticker.postDelayed(hideFullscreenBack, CONTROLS_TIMEOUT_MS)
-    }
-
-    /**
-     * Null while playing: the status panel is hidden then, so there is no copy to show.
-     */
-    @StringRes
-    private fun statusTextFor(state: ConnectionMachine.State): Int? {
-        return when (state) {
-            ConnectionMachine.State.SEARCHING -> R.string.state_searching
-            ConnectionMachine.State.STREAM_DOWN -> R.string.state_stream_down
-            ConnectionMachine.State.READY -> R.string.state_ready
-            ConnectionMachine.State.CONNECTING -> R.string.state_connecting
-            ConnectionMachine.State.NO_QUAD -> R.string.state_no_quad
-            ConnectionMachine.State.RECONNECTING -> R.string.state_reconnecting
-            ConnectionMachine.State.UNAVAILABLE -> R.string.state_unavailable
-            ConnectionMachine.State.PLAYING -> null
-        }
     }
 
     private fun setSystemBarsVisible(visible: Boolean) {
@@ -356,14 +340,5 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val TICK_MS = 1000L
         private const val CONTROLS_TIMEOUT_MS = 3000L
-
-        /** states that show the spinner, being the ones waiting on something */
-        private val BUSY_STATES = setOf(
-            ConnectionMachine.State.SEARCHING,
-            ConnectionMachine.State.STREAM_DOWN,
-            ConnectionMachine.State.CONNECTING,
-            ConnectionMachine.State.NO_QUAD,
-            ConnectionMachine.State.RECONNECTING,
-        )
     }
 }
