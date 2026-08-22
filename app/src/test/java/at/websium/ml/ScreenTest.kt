@@ -73,17 +73,17 @@ class ScreenTest {
     }
 
     @Test
-    fun noQuadBlamesTheQuadAndKeepsSpinning() {
+    fun noAirUnitBlamesTheAirUnitAndKeepsSpinning() {
         assertEquals(
             Screen(
                 chrome = Chrome.TOOLBAR,
                 status = StatusPanel(
-                    textResource = R.string.state_no_quad,
+                    textResource = R.string.state_no_air_unit,
                     isSpinnerVisible = true,
                 ),
                 isInSession = true,
             ),
-            screenFor(State.NO_QUAD),
+            screenFor(State.NO_AIR_UNIT),
         )
     }
 

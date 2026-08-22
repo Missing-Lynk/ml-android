@@ -17,7 +17,7 @@ package at.websium.ml
 class ConnectionMachine {
 
     enum class State {
-        SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_QUAD, PLAYING, RECONNECTING,
+        SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_AIR_UNIT, PLAYING, RECONNECTING,
 
         /**
          * The player could not be built on this device. Terminal for the process: a native
@@ -96,7 +96,7 @@ class ConnectionMachine {
             State.SEARCHING, State.STREAM_DOWN -> Step(state, listOf(Effect.Probe))
             // waiting for the Connect tap
             State.READY -> Step(state)
-            State.CONNECTING, State.NO_QUAD, State.RECONNECTING -> stepConnecting(tick)
+            State.CONNECTING, State.NO_AIR_UNIT, State.RECONNECTING -> stepConnecting(tick)
             State.PLAYING -> stepPlaying(tick)
             // returned above, before the network check
             State.UNAVAILABLE -> Step(state)
@@ -214,7 +214,7 @@ class ConnectionMachine {
         }
 
         if (state == State.CONNECTING && tick.nowMs - sessionStartMs > NO_VIDEO_MS) {
-            state = State.NO_QUAD
+            state = State.NO_AIR_UNIT
         }
         return Step(state, effects)
     }
@@ -276,9 +276,9 @@ class ConnectionMachine {
          * States with a live player behind them.
          */
         val SESSION_STATES =
-            setOf(State.CONNECTING, State.NO_QUAD, State.PLAYING, State.RECONNECTING)
+            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING)
 
-        /** CONNECTING with no frames for this long blames the quad */
+        /** CONNECTING with no frames for this long blames the air unit */
         const val NO_VIDEO_MS = 7000L
 
         /**

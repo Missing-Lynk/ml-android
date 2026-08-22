@@ -29,7 +29,7 @@ import com.google.android.material.progressindicator.CircularProgressIndicator
  * the machine's effects into calls against them.
  *
  * States: SEARCHING (find goggle USB network) -> STREAM_DOWN (RTSP port closed) ->
- * CONNECTING -> NO_QUAD (connected, no frames) / PLAYING (landscape video) ->
+ * CONNECTING -> NO_AIR_UNIT (connected, no frames) / PLAYING (landscape video) ->
  * RECONNECTING (frames stalled; "stay tuned" + auto-retry). A goggle answering on the RTSP
  * port is connected to straight away. Disconnecting parks in READY, where the Connect button
  * is the way back in; unplugging the goggle drops to SEARCHING and re-arms auto-connect.

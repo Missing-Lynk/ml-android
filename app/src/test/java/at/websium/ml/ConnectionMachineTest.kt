@@ -14,7 +14,7 @@ import org.junit.Test
  *
  * Timing is in the machine's own units, driven through an explicit clock. The thresholds are
  * written as literals rather than referenced from the machine, because the numbers are the
- * contract (7 s to "turn on your quad", 8 s of frozen video before reconnecting, and so on).
+ * contract (7 s to blame the air unit, 8 s of frozen video before reconnecting, and so on).
  */
 class ConnectionMachineTest {
 
@@ -154,14 +154,14 @@ class ConnectionMachineTest {
     }
 
     @Test
-    fun noFramesForSevenSecondsBlamesTheQuad() {
+    fun noFramesForSevenSecondsBlamesTheAirUnit() {
         autoConnect()
         assertEquals(State.CONNECTING, tick(7000, frames = 0).state)
-        assertEquals(State.NO_QUAD, tick(7001, frames = 0).state)
+        assertEquals(State.NO_AIR_UNIT, tick(7001, frames = 0).state)
     }
 
     @Test
-    fun framesStillPromoteFromNoQuad() {
+    fun framesStillPromoteFromNoAirUnit() {
         autoConnect()
         tick(7001, frames = 0)
         assertEquals(State.PLAYING, tick(8000, frames = 3).state)
@@ -392,7 +392,7 @@ class ConnectionMachineTest {
         // SESSION_STATES gates the back handler and the session probe; it must stay in step
         // with the states reached after CreatePlayer
         assertEquals(
-            setOf(State.CONNECTING, State.NO_QUAD, State.PLAYING, State.RECONNECTING),
+            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING),
             ConnectionMachine.SESSION_STATES,
         )
     }

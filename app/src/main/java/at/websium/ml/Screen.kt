@@ -78,10 +78,10 @@ fun screenFor(state: ConnectionMachine.State): Screen {
             isInSession = true,
         )
 
-        ConnectionMachine.State.NO_QUAD -> Screen(
+        ConnectionMachine.State.NO_AIR_UNIT -> Screen(
             chrome = Chrome.TOOLBAR,
             status = StatusPanel(
-                textResource = R.string.state_no_quad,
+                textResource = R.string.state_no_air_unit,
                 isSpinnerVisible = true,
             ),
             isInSession = true,

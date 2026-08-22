@@ -18,7 +18,7 @@
     <string name="state_stream_down">Goggle connected, waiting for the video stream…</string>
     <string name="state_ready">Goggle ready, tap Connect</string>
     <string name="state_connecting">Connecting…</string>
-    <string name="state_no_quad">No video, turn on your quad</string>
+    <string name="state_no_air_unit">No video, turn on your quad</string>
     <string name="state_reconnecting">Stay tuned, reconnecting…</string>
     <string name="state_unavailable">Video cannot start on this phone. See Diagnostics in the menu for details.</string>
     <string name="stay_tuned_image">Reconnecting</string>
