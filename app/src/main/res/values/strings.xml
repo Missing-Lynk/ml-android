@@ -18,7 +18,7 @@
     <string name="state_stream_down">Goggle connected, waiting for the video stream…</string>
     <string name="state_ready">Goggle ready, tap Connect</string>
     <string name="state_connecting">Connecting…</string>
-    <string name="state_no_air_unit">No video, turn on your quad</string>
+    <string name="state_no_air_unit">No video, turn on your air unit</string>
     <string name="state_reconnecting">Stay tuned, reconnecting…</string>
     <string name="state_unavailable">Video cannot start on this phone. See Diagnostics in the menu for details.</string>
     <string name="stay_tuned_image">Reconnecting</string>
@@ -31,7 +31,7 @@
     <string name="about_connect_head">Connecting</string>
     <string name="about_connect_body">Connect the goggle to your phone with a USB-A to USB-C OTG adapter. A plain USB-C to USB-C cable will not work, the phone will not act as the USB host. The app then finds the goggle and starts the video on its own.</string>
     <string name="about_video_head">Getting video</string>
-    <string name="about_video_body">Power on your quad so it transmits. If you see \"No video, turn on your quad\", the goggle is connected but nothing is streaming yet. The feed keeps reconnecting on its own, so battery swaps are fine.</string>
+    <string name="about_video_body">Power on your air unit so it transmits. If you see \"No video, turn on your air unit\", the goggle is connected but nothing is streaming yet. The feed keeps reconnecting on its own, so battery swaps are fine.</string>
     <string name="about_recovery_head">Recovery</string>
     <string name="about_recovery_body">If the goggle ever misbehaves, hold its BACK button while powering on to boot stock (without MissingLynk).</string>
 
