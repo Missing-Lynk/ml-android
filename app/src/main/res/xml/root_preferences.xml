@@ -14,4 +14,17 @@
         app:selectable="false"
         app:iconSpaceReserved="false" />
 
+    <!-- No useSimpleSummaryProvider here: the value ends in a stream key, and the built-in
+         provider would print it on the settings screen. SettingsFragment installs a provider
+         that redacts the last path segment instead. -->
+    <EditTextPreference
+        app:key="@string/pref_rtmp_key"
+        app:title="@string/pref_rtmp_title"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        app:summary="@string/pref_rtmp_note"
+        app:selectable="false"
+        app:iconSpaceReserved="false" />
+
 </PreferenceScreen>

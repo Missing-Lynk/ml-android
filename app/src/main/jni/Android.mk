@@ -26,16 +26,33 @@ include $(GSTREAMER_NDK_BUILD_PATH)/plugins.mk
 # rtpmanager = jitterbuffer used by rtspsrc; udp/tcp = rtsp transports;
 # androidmedia = HW HEVC decode; libav = avdec_h265 SW fallback;
 # videoconvertscale + coreelements = glue.
+#   flv + rtmp2 = the restream egress (flvmux ! rtmp2sink), rtmp2 rather than the librtmp-based
+# rtmpsink because only rtmp2 speaks rtmps, which YouTube requires.
+#   voaacenc + audiotestsrc + audioconvert + audioresample = the silent AAC track. RTMP ingests
+# behave badly with video-only, and because the audio is decoupled from the video it keeps
+# flowing through an RF dropout, which holds the session open instead of ending the broadcast.
+#   gio = the TLS transport rtmps rides on.
+#   app = the appsrc heading the egress pipeline. The egress is a pipeline of its own, fed by a
+# pad probe on the player's tee, so a destination that fails returns its error to its own bus
+# and its own flow path instead of upstream into the leg carrying the picture.
 GSTREAMER_PLUGINS := coreelements videoconvertscale opengl androidmedia \
-                     rtsp rtp rtpmanager udp tcp videoparsersbad libav playback
-GSTREAMER_EXTRA_DEPS := gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-rtp-1.0
+                     rtsp rtp rtpmanager udp tcp videoparsersbad libav playback \
+                     flv rtmp2 voaacenc audiotestsrc audioconvert audioresample gio app
+# openssl is here for the GIO TLS module below: G_IO_MODULES links the module itself but not the
+# libssl/libcrypto it calls into, which otherwise fails as a wall of undefined X509_* symbols.
+GSTREAMER_EXTRA_DEPS := gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-rtp-1.0 \
+                        gstreamer-app-1.0 openssl
 
-# Both default to yes in gstreamer-1.0.mk, which copies a 348 KB font and a 220 KB CA bundle
-# into src/main/assets on every build and uncomments the matching copy calls in the generated
-# GStreamer.java. Nothing in this pipeline uses either: no plugin above needs pango, and rtsp://
-# needs no TLS database. Off, so the assets are neither generated nor packaged.
+# The gio plugin supplies the transport; the TLS backend behind it is a separate GIO module that
+# has to be linked and registered by name. Without this line rtmps fails at the handshake with a
+# plain connection error and nothing mentioning TLS, however many CA certificates are packaged.
+G_IO_MODULES := openssl
+
+# Fonts stay off: no plugin here needs pango, and the 348 KB face would be copied into
+# src/main/assets on every build. CA certificates are on because rtmps validates the ingest's
+# certificate against them, which costs about 220 KB.
 GSTREAMER_INCLUDE_FONTS := no
-GSTREAMER_INCLUDE_CA_CERTIFICATES := no
+GSTREAMER_INCLUDE_CA_CERTIFICATES := yes
 
 include $(GSTREAMER_NDK_BUILD_PATH)/gstreamer-1.0.mk
 

@@ -5,6 +5,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- The broadcast has to survive the screen going off, which backgrounds the app and
+         takes its network with it. A foreground service is the exemption; the Wi-Fi lock
+         keeps the radio out of power save, which an upload feels as a stall. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:name=".MissingLynkApp"
         android:allowBackup="true"
@@ -44,6 +53,11 @@
             android:exported="false"
             android:label="@string/diagnostics_title"
             android:parentActivityName=".MainActivity" />
+
+        <service
+            android:name=".RestreamService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

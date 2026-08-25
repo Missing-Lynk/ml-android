@@ -88,6 +88,41 @@
             android:src="@drawable/ic_arrow_back"
             android:visibility="gone"
             app:tint="@android:color/white" />
+
+        <!-- Stays on screen for as long as the restream is armed, unlike the controls, which
+             hide themselves: whether a session is being broadcast has to be readable at a
+             glance, without touching the display and covering the picture. -->
+        <TextView
+            android:id="@+id/stream_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="16dp"
+            android:background="@drawable/bg_scrim_pill"
+            android:drawablePadding="8dp"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="@android:color/white"
+            android:visibility="gone"
+            app:drawableStartCompat="@drawable/ic_dot_live"
+            tools:text="Streaming"
+            tools:visibility="visible" />
+
+        <!-- revealed by the same tap as the back control; arms and disarms the restream, so a
+             session can be previewed before anything is broadcast -->
+        <ImageButton
+            android:id="@+id/stream_toggle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:background="@drawable/bg_scrim_circle"
+            android:contentDescription="@string/stream_start"
+            android:padding="10dp"
+            android:src="@drawable/ic_stream_start"
+            android:visibility="gone"
+            app:tint="@android:color/white" />
     </FrameLayout>
 
 </LinearLayout>

@@ -21,6 +21,12 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
 
     override var onEvent: ((PlayerEvent) -> Unit)? = null
 
+    override var onCodec: ((String) -> Unit)? = null
+
+    override var onRestreamFailed: ((String) -> Unit)? = null
+
+    override var onRestreamLive: ((Boolean) -> Unit)? = null
+
     override val frameCount: Int get() = nativeFrameCount()
 
     private var surface: Surface? = null
@@ -58,6 +64,10 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
         nativePlay()
     }
 
+    override fun setRestream(url: String?) {
+        nativeSetRestream(url)
+    }
+
     override fun release() {
         nativeFinalize()
         surface?.release()
@@ -72,6 +82,28 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
      */
     private fun onNativeLog(message: String) {
         Diagnostics.log("gst", message)
+    }
+
+    /**
+     * Invoked from the native GStreamer thread once the SDP names the codec.
+     */
+    private fun onNativeCodec(codec: String) {
+        onCodec?.invoke(codec)
+    }
+
+    /**
+     * Invoked from the native GStreamer thread when the egress fails. The player pipeline keeps
+     * playing, so this is deliberately not routed through [onEvent].
+     */
+    private fun onNativeRestreamFailed(reason: String) {
+        onRestreamFailed?.invoke(reason)
+    }
+
+    /**
+     * Invoked from the native GStreamer thread when the egress starts or stops carrying.
+     */
+    private fun onNativeRestreamLive(live: Boolean) {
+        onRestreamLive?.invoke(live)
     }
 
     /**
@@ -112,6 +144,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     private external fun nativeInit()
     private external fun nativeFinalize()
     private external fun nativeSetUri(uri: String)
+    private external fun nativeSetRestream(url: String?)
     private external fun nativePlay()
     private external fun nativeSurfaceInit(surface: Surface)
     private external fun nativeSurfaceFinalize()

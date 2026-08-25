@@ -61,6 +61,13 @@ class ConnectionMachine {
 
         /** false while the activity is stopped: stall detection pauses, the feed does not */
         val foreground: Boolean,
+
+        /**
+         * Whether a broadcast is armed. A stalled feed off screen is nothing to act on while the
+         * only consumer is a surface that is gone, and everything to act on while it is also
+         * being sent somewhere: a broadcast rides on the feed being reconnected.
+         */
+        val isRestreaming: Boolean = false,
         val nowMs: Long,
     )
 
@@ -264,7 +271,8 @@ class ConnectionMachine {
             return Step(state)
         }
 
-        if (!tick.foreground || tick.nowMs - lastFrameAtMs <= STALL_MS) {
+        val watchesStalls = tick.foreground || tick.isRestreaming
+        if (!watchesStalls || tick.nowMs - lastFrameAtMs <= STALL_MS) {
             return Step(state)
         }
 

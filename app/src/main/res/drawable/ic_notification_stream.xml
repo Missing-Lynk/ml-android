@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The status bar inflates a notification's small icon in the system UI's context, where an
+  app theme attribute does not resolve. An icon carrying one fails to load and the notification
+  is dropped without a word: the service still reports isForeground, and the only trace is
+  numEnqueuedByApp counting up while numPostedByApp stays at zero. Hence a flat colour here, and
+  white, because the system tints these itself.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8,5v14l11,-7z" />
+</vector>

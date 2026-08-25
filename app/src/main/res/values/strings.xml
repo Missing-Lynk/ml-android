@@ -41,4 +41,19 @@
     <string name="pref_url_title">Stream URL</string>
     <string name="pref_url_note">No need to change this unless you know what you are doing.</string>
     <string name="default_rtsp_url" translatable="false">rtsp://192.168.3.101:554/venc8/stream</string>
+    <string name="pref_rtmp_key" translatable="false">rtmp_url</string>
+    <string name="pref_rtmp_title">Streaming destination</string>
+    <string name="pref_rtmp_note">Paste the full ingest URL with your stream key on the end, for example rtmp://live.twitch.tv/app/YOUR-KEY. Add ?bandwidthtest=true to test against Twitch Inspector without going live. The key is hidden once saved and is kept out of the diagnostics log.</string>
+    <string name="pref_rtmp_unset">Not set</string>
+    <string name="stream_start">Start streaming</string>
+    <string name="stream_stop">Stop streaming</string>
+    <string name="stream_needs_destination">Set a streaming destination in Settings first</string>
+    <string name="stream_started">Streaming started</string>
+    <string name="stream_stopped">Streaming stopped</string>
+    <string name="stream_badge_live">Streaming</string>
+    <string name="stream_badge_reconnecting">Reconnecting…</string>
+    <string name="stream_notification_channel">Streaming</string>
+    <string name="stream_notification_title">Streaming</string>
+    <string name="stream_notification_text">Broadcast is running</string>
+    <string name="stream_codec_rejected">This destination needs H.264. The goggle is sending H.265; change DVR &#062; Codec on the goggle.</string>
 </resources>

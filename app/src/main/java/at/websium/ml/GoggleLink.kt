@@ -2,6 +2,7 @@ package at.websium.ml
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -59,10 +60,16 @@ internal fun looksLikeGadget(facts: NetworkFacts): Boolean {
  * matches the gadget-looking one wins; a network that is positively something else (WiFi,
  * cellular) is never chosen, and anything unidentifiable is taken only as a last resort so an
  * unusual gadget still connects.
+ *
+ * [acceptAnyTransport] drops the transport requirement and takes any address match, which lets a
+ * debug build reach the host-side fake goggle (`tools/ml-fake-goggle.py`) over WiFi with no
+ * hardware present. It is off in release builds, where taking WiFi is the failure this function
+ * exists to prevent.
  */
 internal fun <T> pickGoggle(
     prefix: String,
     candidates: List<T>,
+    acceptAnyTransport: Boolean = false,
     facts: (T) -> NetworkFacts,
 ): T? {
     val onTheSubnet = candidates.filter { candidate ->
@@ -72,9 +79,13 @@ internal fun <T> pickGoggle(
     if (gadget != null) {
         return gadget
     }
-    return onTheSubnet.firstOrNull { candidate ->
+    val unidentified = onTheSubnet.firstOrNull { candidate ->
         !facts(candidate).wifi && !facts(candidate).cellular
     }
+    if (unidentified != null || !acceptAnyTransport) {
+        return unidentified
+    }
+    return onTheSubnet.firstOrNull()
 }
 
 /**
@@ -89,6 +100,14 @@ internal fun <T> pickGoggle(
 class GoggleLink(context: Context) {
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+
+    /*
+     * Read from the installed package's own flag rather than a build-config constant, so it is
+     * the shipped artifact that decides. A release build is never debuggable, so the relaxed
+     * network selection cannot reach a user.
+     */
+    private val acceptAnyTransport =
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     private val probeExecutor = Executors.newSingleThreadExecutor()
     private val mainThread = Handler(Looper.getMainLooper())
     private var probeInFlight = false
@@ -184,7 +203,9 @@ class GoggleLink(context: Context) {
         if (manager == null) {
             return null
         }
-        return pickGoggle(prefix, networks.toList()) { network -> factsFor(manager, network) }
+        return pickGoggle(prefix, networks.toList(), acceptAnyTransport) { network ->
+            factsFor(manager, network)
+        }
     }
 
     private fun factsFor(manager: ConnectivityManager, network: Network): NetworkFacts {
@@ -209,6 +230,13 @@ class GoggleLink(context: Context) {
         if (network == boundNetwork) {
             return
         }
+
+        /*
+         * Every socket in the process is routed by this call, so a change here breaks whatever
+         * the player already has open. It is logged because it decides what the program does
+         * next, and because a binding that flaps looks exactly like a failing stream.
+         */
+        Diagnostics.log("link", "routing over ${network ?: "no network"}")
         boundNetwork = network
         connectivity?.bindProcessToNetwork(network)
     }

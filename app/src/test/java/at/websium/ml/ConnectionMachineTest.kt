@@ -25,7 +25,16 @@ class ConnectionMachineTest {
         hasNetwork: Boolean = true,
         frames: Int? = null,
         foreground: Boolean = true,
-    ) = machine.onTick(Tick(hasNetwork, frames, foreground, now))
+        isRestreaming: Boolean = false,
+    ) = machine.onTick(
+        Tick(
+            hasNetwork = hasNetwork,
+            frameCount = frames,
+            foreground = foreground,
+            isRestreaming = isRestreaming,
+            nowMs = now,
+        )
+    )
 
     /** drive to CONNECTING the way an auto-connect does, with a player attached at t=0 */
     private fun autoConnect() {
@@ -290,6 +299,17 @@ class ConnectionMachineTest {
         autoConnect()
         tick(1000, frames = 5)
         assertEquals(State.PLAYING, tick(60000, frames = 5, foreground = false).state)
+    }
+
+    @Test
+    fun aBackgroundedAppChasesStallsWhileBroadcasting() {
+        // off screen the picture does not matter, but a broadcast does: it rides on the feed,
+        // so a stalled feed has to be reconnected whether or not anything is rendering it
+        autoConnect()
+        tick(1000, frames = 5)
+        val step = tick(60000, frames = 5, foreground = false, isRestreaming = true)
+        assertEquals(State.RECONNECTING, step.state)
+        assertTrue(step.effects.contains(Effect.StartStream))
     }
 
     @Test

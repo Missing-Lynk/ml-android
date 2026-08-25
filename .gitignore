@@ -18,11 +18,15 @@ keystore.properties
 # gstreamer_android.c is generated per build; ndk-build writes it under build/ndk
 /app/gst-android-build/
 
-# gstreamer-1.0.mk stages fonts/CA certificates here when GSTREAMER_INCLUDE_* are on (jni/Android.mk
-# turns them off, so this only catches a build that re-enables them)
+# gstreamer-1.0.mk stages fonts and CA certificates here on every build. jni/Android.mk asks for
+# the CA bundle (rtmps validates the ingest's certificate against it) and declines the fonts, so
+# this holds a regenerated copy of ssl/ that belongs to the build rather than to the tree.
 /app/src/main/assets/
 
 # gstreamer-1.0.mk's copyjavasource target regenerates the SDK's Java helpers here every build.
 # Not a sourceSet, so nothing compiles it; the copy the app actually uses is committed under
 # src/main/java/org/freedesktop/gstreamer/.
 /app/src/org/
+
+# Bytecode for the host-side tools in tools/, written wherever they are imported from.
+tools/__pycache__/
