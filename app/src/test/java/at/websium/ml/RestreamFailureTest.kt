@@ -53,6 +53,18 @@ class RestreamFailureTest {
         )
     }
 
+    /**
+     * Observed on a device against a destination saved as `rtmp://`: only the scheme is checked
+     * before arming, so an incomplete URL reaches `rtmp2sink` and is refused there.
+     */
+    @Test
+    fun anIncompleteUrlIsToldApartFromAnUnreachableHost() {
+        assertEquals(
+            R.string.stream_error_url_incomplete,
+            egressFailureText("Failed to connect: Host is not set")
+        )
+    }
+
     @Test
     fun aRefusedSocketIsTheDestination() {
         assertEquals(

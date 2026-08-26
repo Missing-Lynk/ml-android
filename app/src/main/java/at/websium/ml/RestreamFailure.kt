@@ -43,6 +43,16 @@ internal fun egressFailureText(reason: String): Int {
         text.contains("tls handshake") || text.contains("certificate") ->
             R.string.stream_error_tls
 
+        /*
+         * `rtmp_rtmpclient.c` names whichever part of the location it could not read. Only the
+         * scheme is checked before arming, so `rtmp://` with nothing after it arms and lands
+         * here as `Failed to connect: Host is not set`.
+         */
+        text.contains("host is not set") ||
+            text.contains("port is not set") ||
+            text.contains("application is not set") ||
+            text.contains("stream is not set") -> R.string.stream_error_url_incomplete
+
         text.contains("connection refused") ||
             text.contains("unreachable") ||
             text.contains("no route to host") ||
