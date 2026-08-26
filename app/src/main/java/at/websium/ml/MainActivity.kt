@@ -32,9 +32,10 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 
 /**
- * Hosts the video and renders whatever state [ConnectionMachine] is in. The machine decides
- * the states and the timing; this class owns the player, the link and the views, and turns
- * the machine's effects into calls against them.
+ * Hosts the video and renders whatever state the two machines are in. [ConnectionMachine] decides
+ * the connection states and their timing, [RestreamMachine] decides whether a broadcast is armed
+ * and carrying; this class owns the player, the link, the keep-alive service and the views, and
+ * turns both machines' effects into calls against them.
  *
  * States: SEARCHING (find goggle USB network) -> STREAM_DOWN (RTSP port closed) ->
  * CONNECTING -> NO_AIR_UNIT (connected, no frames) / PLAYING (landscape video) ->
@@ -61,12 +62,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var link: GoggleLink
 
     private val machine = ConnectionMachine()
+    private val restream = RestreamMachine()
 
-    /** the state the views currently show; rendering is skipped while it matches the machine */
-    private var rendered: ConnectionMachine.State? = null
+    /** what the views currently show; rendering is skipped while it matches */
+    private var rendered: Screen? = null
 
-    /** what the views currently show, so tap handling reads the value instead of re-deriving it */
-    private var screen: Screen = screenFor(ConnectionMachine.State.SEARCHING)
+    /** the connection state the transition log last reported */
+    private var loggedState: ConnectionMachine.State? = null
+
+    /** whether the transient controls over the video are showing */
+    private var areControlsRevealed = false
 
     private val ticker = Handler(Looper.getMainLooper())
     private var foreground = true
@@ -77,22 +82,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val hideFullscreenBack = Runnable {
-        fullscreenBack.visibility = View.GONE
-        streamToggle.visibility = View.GONE
+    private val hideControls = Runnable {
+        areControlsRevealed = false
+        render()
     }
-
-    /** whether the restream is armed; the egress pipeline exists only while this is true */
-    private var isStreaming = false
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
-    /** whether the egress is carrying, as the player last reported it */
-    private var isRestreamLive = false
-
-    /** the codec the SDP named, which decides whether a destination will take the stream */
-    private var negotiatedCodec: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,8 +111,8 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(toolbar)
 
         connectButton.setOnClickListener { apply(machine.onConnectTapped(now())) }
-        // tap the video while fullscreen to reveal a back control; tap it to disconnect
-        videoContainer.setOnClickListener { revealFullscreenBack() }
+        // tap the video while fullscreen to reveal the controls; the back one disconnects
+        videoContainer.setOnClickListener { revealControls() }
         fullscreenBack.setOnClickListener { disconnect() }
         streamToggle.setOnClickListener { toggleStreaming() }
         onBackPressedDispatcher.addCallback(this, leaveSession)
@@ -136,7 +132,7 @@ class MainActivity : AppCompatActivity() {
         // run the state machine for the activity's whole life. We deliberately do NOT stop
         // the player on background: the feed keeps decoding so it's live (not frozen) on
         // return, which is what Twitch screen-share needs.
-        render(machine.state)
+        render()
         ticker.post(tick)
     }
 
@@ -176,14 +172,12 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         ticker.removeCallbacks(tick)
+        applyRestream(restream.onShutdown())
         teardownPlayer()
-        /* the service exists to keep this session's broadcast alive, and the session ends here */
-        RestreamService.stop(this)
         link.shutdown()
     }
 
-    // ---- driving the machine ----
-
+    // driving the machines
     private val tick = object : Runnable {
         override fun run() {
             step()
@@ -200,7 +194,7 @@ class MainActivity : AppCompatActivity() {
                     hasNetwork = network != null,
                     frameCount = player?.frameCount,
                     foreground = foreground,
-                    isRestreaming = isStreaming,
+                    isRestreaming = restream.isArmed,
                     nowMs = now(),
                 )
             )
@@ -208,11 +202,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun disconnect() {
+        applyRestream(restream.onSessionLeft())
         apply(machine.onDisconnect(link.goggleNetwork() != null, now()))
     }
 
     /**
-     * Carry out the machine's effects, then bring the views up to date.
+     * Carry out the connection machine's effects, then bring the views up to date.
      */
     private fun apply(step: ConnectionMachine.Step) {
         var playerFailure: String? = null
@@ -222,8 +217,13 @@ class MainActivity : AppCompatActivity() {
                     Diagnostics.log(effect.tag, effect.message)
                 }
                 ConnectionMachine.Effect.CreatePlayer -> {
-                    if (playerFailure == null && ensurePlayer() == null) {
-                        playerFailure = lastPlayerFailure
+                    if (playerFailure == null) {
+                        val hadPlayer = player != null
+                        if (ensurePlayer() == null) {
+                            playerFailure = lastPlayerFailure
+                        } else if (!hadPlayer) {
+                            applyRestream(restream.onPlayerCreated(configuredDestination()))
+                        }
                     }
                 }
                 ConnectionMachine.Effect.TeardownPlayer -> {
@@ -251,16 +251,47 @@ class MainActivity : AppCompatActivity() {
             apply(machine.onPlayerUnavailable(failure))
             return
         }
-        if (step.state != rendered) {
-            render(step.state)
+        render()
+    }
+
+    /**
+     * Carry out the restream machine's effects, then bring the views up to date.
+     */
+    private fun applyRestream(step: RestreamMachine.Step) {
+        step.effects.forEach { effect ->
+            when (effect) {
+                is RestreamMachine.Effect.Log -> {
+                    Diagnostics.log(effect.tag, effect.message)
+                }
+                is RestreamMachine.Effect.ArmEgress -> {
+                    player?.setRestream(effect.url)
+                }
+                RestreamMachine.Effect.DisarmEgress -> {
+                    player?.setRestream(null)
+                }
+                is RestreamMachine.Effect.StartKeepAlive -> {
+                    RestreamService.start(this, effect.destination)
+                }
+                RestreamMachine.Effect.StopKeepAlive -> {
+                    RestreamService.stop(this)
+                }
+                RestreamMachine.Effect.RequestNotificationPermission -> {
+                    requestNotificationPermission()
+                }
+                is RestreamMachine.Effect.Toast -> {
+                    toast(effect.textResource)
+                }
+                is RestreamMachine.Effect.ToastDetail -> {
+                    toast(effect.text)
+                }
+            }
         }
+        render()
     }
 
     private fun now(): Long {
         return SystemClock.elapsedRealtime()
     }
-
-    // ---- player ----
 
     /**
      * Null when the player cannot be built here; [lastPlayerFailure] then says why.
@@ -283,40 +314,13 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { machine.onPlayerEvent(event) }
             }
             created.onCodec = { codec ->
-                runOnUiThread { negotiatedCodec = codec }
+                runOnUiThread { applyRestream(restream.onCodecNegotiated(codec)) }
             }
-            /*
-             * The video is unaffected by an egress failure, so this reports rather than tearing
-             * anything down. A refused stream key must not cost the picture. The toggle stays on
-             * because the player reconnects on its own; only the button clears it.
-             */
             created.onRestreamFailed = { reason ->
-                runOnUiThread {
-                    Diagnostics.log("stream", "restream failed: $reason")
-                    Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
-                }
+                runOnUiThread { applyRestream(restream.onEgressFailed(reason)) }
             }
             created.onRestreamLive = { live ->
-                runOnUiThread {
-                    isRestreamLive = live
-                    renderStreamBadge()
-                }
-            }
-            /*
-             * A teardown takes the egress down with the player, and the destination is armed
-             * on the player rather than held natively across instances. Re-arm here so losing the
-             * goggle and getting it back does not quietly end the broadcast.
-             */
-            if (isStreaming) {
-                val destination = armedDestination()
-                if (destination != null) {
-                    created.setRestream(destination)
-                    Diagnostics.log("stream", "re-armed ${redactStreamKey(destination)}")
-                } else {
-                    isStreaming = false
-                    RestreamService.stop(this)
-                    renderStreamToggle()
-                }
+                runOnUiThread { applyRestream(restream.onEgressLive(live)) }
             }
             player = created
             created
@@ -327,19 +331,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun teardownPlayer() {
+        if (player == null) {
+            return
+        }
         player?.release()
         player = null
+        applyRestream(restream.onPlayerGone())
     }
 
-    // ---- rendering ----
-
-    private fun render(state: ConnectionMachine.State) {
-        if (rendered != null) {
-            Diagnostics.log("state", "$rendered -> $state")
+    /**
+     * Build the screen both machines currently describe and write it, unless the views already
+     * show it.
+     */
+    private fun render() {
+        if (isDestroyed) {
+            // the shutdown effects run after onDestroy, where there are no views left to write
+            return
         }
-        rendered = state
-        screen = screenFor(state, machine.failureReason)
-        applyScreen(screen)
+
+        val state = machine.state
+        if (loggedState != null && loggedState != state) {
+            Diagnostics.log("state", "$loggedState -> $state")
+        }
+        loggedState = state
+
+        val next = screenFor(state, machine.failureReason, restream.state, areControlsRevealed)
+        if (next.chrome != Chrome.IMMERSIVE) {
+            // the controls belong to the immersive chrome, and their timer leaves with them
+            ticker.removeCallbacks(hideControls)
+            areControlsRevealed = false
+        }
+
+        if (next == rendered) {
+            return
+        }
+        rendered = next
+        applyScreen(next)
     }
 
     /**
@@ -368,12 +395,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val controls = screen.controls
+        fullscreenBack.visibility = visibilityOf(controls.isBackVisible)
+
+        val toggle = controls.toggle
+        streamToggle.visibility = visibilityOf(toggle != null)
+        if (toggle != null) {
+            streamToggle.setImageResource(toggle.iconResource)
+            streamToggle.contentDescription = getString(toggle.descriptionResource)
+        }
+
+        val badge = controls.badge
+        streamBadge.visibility = visibilityOf(badge != null)
+        if (badge != null) {
+            streamBadge.setText(badge.textResource)
+            streamBadge.setCompoundDrawablesRelativeWithIntrinsicBounds(badge.iconResource, 0, 0, 0)
+        }
+
         // show the video only while actually playing, so no frozen last frame leaks through
         player?.setVideoVisible(status == null)
-
-        // the fullscreen back control is only shown transiently on tap
-        ticker.removeCallbacks(hideFullscreenBack)
-        fullscreenBack.visibility = View.GONE
 
         requestedOrientation = when {
             immersive -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -392,18 +432,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * The configured destination, or null when nothing usable is set.
+     * The destination as Settings currently holds it, unvalidated: judging it belongs to
+     * [RestreamMachine], which is where it can be tested.
      *
      * Read at the moment of arming rather than cached, so editing it in Settings and coming back
      * takes effect without restarting the session.
      */
-    private fun armedDestination(): String? {
-        val destination = PreferenceManager.getDefaultSharedPreferences(this)
+    private fun configuredDestination(): String? {
+        return PreferenceManager.getDefaultSharedPreferences(this)
             .getString(getString(R.string.pref_rtmp_key), null)
-        if (!isRestreamUrl(destination)) {
-            return null
-        }
-        return destination!!.trim()
+    }
+
+    private fun toggleStreaming() {
+        applyRestream(restream.onToggleTapped(configuredDestination()))
     }
 
     /**
@@ -425,94 +466,22 @@ class MainActivity : AppCompatActivity() {
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    /**
-     * Arm or disarm the restream. The egress is a pipeline of its own, so both directions leave
-     * the picture untouched; the service that keeps a backgrounded broadcast alive follows the
-     * same switch.
-     */
-    private fun toggleStreaming() {
-        val activePlayer = player
-        if (activePlayer == null) {
-            return
-        }
-
-        if (isStreaming) {
-            isStreaming = false
-            isRestreamLive = false
-            activePlayer.setRestream(null)
-            RestreamService.stop(this)
-            renderStreamToggle()
-            Diagnostics.log("stream", "stopped by the user")
-            toast(R.string.stream_stopped)
-            return
-        }
-
-        val trimmed = armedDestination()
-        if (trimmed == null) {
-            toast(R.string.stream_needs_destination)
-            return
-        }
-
-        if (negotiatedCodec != null && !isCodecAccepted(trimmed, negotiatedCodec!!)) {
-            toast(R.string.stream_codec_rejected)
-            Diagnostics.log("stream", "refused: $negotiatedCodec to ${redactStreamKey(trimmed)}")
-            return
-        }
-
-        requestNotificationPermission()
-        isStreaming = true
-        isRestreamLive = false
-        activePlayer.setRestream(trimmed)
-        RestreamService.start(this, redactStreamKey(trimmed))
-        renderStreamToggle()
-        Diagnostics.log("stream", "started to ${redactStreamKey(trimmed)}")
-        toast(R.string.stream_started)
-    }
-
-    private fun renderStreamToggle() {
-        streamToggle.setImageResource(
-            if (isStreaming) R.drawable.ic_stream_stop else R.drawable.ic_stream_start
-        )
-        streamToggle.contentDescription =
-            getString(if (isStreaming) R.string.stream_stop else R.string.stream_start)
-        renderStreamBadge()
-    }
-
-    /**
-     * The badge is tied to the armed state, not to the toggle's visibility: the controls hide
-     * themselves after a tap and the broadcast has to stay readable once they have.
-     *
-     * A reconnect is silent by design, so an armed restream that is not carrying says so rather
-     * than showing the same thing as one that is.
-     */
-    private fun renderStreamBadge() {
-        if (!isStreaming) {
-            streamBadge.visibility = View.GONE
-            return
-        }
-
-        streamBadge.visibility = View.VISIBLE
-        streamBadge.setText(
-            if (isRestreamLive) R.string.stream_badge_live else R.string.stream_badge_reconnecting
-        )
-        streamBadge.setCompoundDrawablesRelativeWithIntrinsicBounds(
-            if (isRestreamLive) R.drawable.ic_dot_live else R.drawable.ic_dot_reconnecting,
-            0, 0, 0
-        )
-    }
-
     private fun toast(@StringRes message: Int) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
-    private fun revealFullscreenBack() {
-        if (screen.chrome != Chrome.IMMERSIVE) {
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun revealControls() {
+        if (rendered?.chrome != Chrome.IMMERSIVE) {
             return
         }
-        fullscreenBack.visibility = View.VISIBLE
-        streamToggle.visibility = View.VISIBLE
-        ticker.removeCallbacks(hideFullscreenBack)
-        ticker.postDelayed(hideFullscreenBack, CONTROLS_TIMEOUT_MS)
+        areControlsRevealed = true
+        render()
+        ticker.removeCallbacks(hideControls)
+        ticker.postDelayed(hideControls, CONTROLS_TIMEOUT_MS)
     }
 
     private fun setSystemBarsVisible(visible: Boolean) {

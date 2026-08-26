@@ -124,8 +124,7 @@ class ScreenTest {
         )
     }
 
-    // ---- the player's complaint, shown while the next attempt runs ----
-
+    // the player's complaint, shown while the next attempt runs
     @Test
     fun aMidAttemptScreenShowsWhyTheLastAttemptFailed() {
         val reason = "error from rtspsrc0: Could not open resource for reading."
@@ -170,8 +169,7 @@ class ScreenTest {
         assertNull(screenFor(State.RECONNECTING).status?.hint)
     }
 
-    // ---- rules that hold across the whole table ----
-
+    // rules that hold across the whole table
     @Test
     fun sessionMembershipTracksTheMachinesOwnSet() {
         val inSession = State.entries.filter { state -> screenFor(state).isInSession }.toSet()
@@ -190,5 +188,75 @@ class ScreenTest {
     fun theStatusPanelIsHiddenOnlyWhilePlaying() {
         val panelless = State.entries.filter { state -> screenFor(state).status == null }.toSet()
         assertEquals(setOf(State.PLAYING), panelless)
+    }
+
+    // the controls over the video
+    @Test
+    fun aScreenWithNothingArmedAndNothingRevealedHasNoControls() {
+        assertEquals(Controls(), screenFor(State.PLAYING).controls)
+        assertEquals(Controls(), screenFor(State.SEARCHING).controls)
+    }
+
+    @Test
+    fun tappingTheVideoRevealsTheBackControlAndTheToggle() {
+        assertEquals(
+            Controls(isBackVisible = true, toggle = Toggle.START),
+            screenFor(State.PLAYING, areControlsRevealed = true).controls,
+        )
+    }
+
+    @Test
+    fun theToggleOffersToStopWhateverIsArmed() {
+        assertEquals(
+            Toggle.STOP,
+            screenFor(
+                State.PLAYING,
+                restream = RestreamMachine.State.ARMED,
+                areControlsRevealed = true,
+            ).controls.toggle,
+        )
+        assertEquals(
+            Toggle.STOP,
+            screenFor(
+                State.PLAYING,
+                restream = RestreamMachine.State.CARRYING,
+                areControlsRevealed = true,
+            ).controls.toggle,
+        )
+    }
+
+    @Test
+    fun theControlsBelongToTheImmersiveChromeAndAppearInNoOther() {
+        val revealed = ConnectionMachine.State.entries.filter { state ->
+            screenFor(state, areControlsRevealed = true).controls.isBackVisible
+        }.toSet()
+        assertEquals(setOf(State.PLAYING, State.RECONNECTING), revealed)
+
+        val toggled = ConnectionMachine.State.entries.filter { state ->
+            screenFor(state, areControlsRevealed = true).controls.toggle != null
+        }.toSet()
+        assertEquals(setOf(State.PLAYING, State.RECONNECTING), toggled)
+    }
+
+    @Test
+    fun theBadgeSaysWhetherAnArmedBroadcastIsCarrying() {
+        assertNull(screenFor(State.PLAYING, restream = RestreamMachine.State.OFF).controls.badge)
+        assertEquals(
+            Badge.RECONNECTING,
+            screenFor(State.PLAYING, restream = RestreamMachine.State.ARMED).controls.badge,
+        )
+        assertEquals(
+            Badge.LIVE,
+            screenFor(State.PLAYING, restream = RestreamMachine.State.CARRYING).controls.badge,
+        )
+    }
+
+    @Test
+    fun theBadgeStaysUpInEveryChromeBecauseTheFeedIsWhatGoesAway() {
+        // the controls hide themselves; whether a session is being broadcast has to outlast them
+        val lit = ConnectionMachine.State.entries.filter { state ->
+            screenFor(state, restream = RestreamMachine.State.ARMED).controls.badge != null
+        }.toSet()
+        assertEquals(ConnectionMachine.State.entries.toSet(), lit)
     }
 }
