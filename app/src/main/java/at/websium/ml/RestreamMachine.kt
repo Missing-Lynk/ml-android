@@ -56,9 +56,6 @@ class RestreamMachine {
 
         data class Toast(@param:StringRes val textResource: Int) : Effect
 
-        /** a message the app did not write, such as the reason the egress gave up */
-        data class ToastDetail(val text: String) : Effect
-
         data class Log(val tag: String, val message: String) : Effect
     }
 
@@ -228,13 +225,18 @@ class RestreamMachine {
     /**
      * The egress gave up. The picture is unaffected and the player reconnects on its own, so
      * this reports and leaves the broadcast armed.
+     *
+     * The toast carries the cause [egressFailureText] reads out of the reason, since a rejected
+     * stream key is something the user can fix and GStreamer's own wording says only that a
+     * socket failed. The log keeps the text as it arrived, because that is the half a bug report
+     * needs and the only place it is worth reading.
      */
     fun onEgressFailed(reason: String): Step {
         return Step(
             state,
             listOf(
                 Effect.Log("stream", "restream failed: $reason"),
-                Effect.ToastDetail(reason),
+                Effect.Toast(egressFailureText(reason)),
             ),
         )
     }

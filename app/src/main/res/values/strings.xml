@@ -79,4 +79,9 @@
     <string name="stream_notification_title">Streaming</string>
     <string name="stream_notification_text">Broadcast is running</string>
     <string name="stream_codec_rejected">This destination needs H.264. The goggle is sending H.265; change DVR &#062; Codec on the goggle.</string>
+    <string name="stream_error_key_rejected">The destination rejected the stream key. Check it in Settings &#062; Streaming destination.</string>
+    <string name="stream_error_key_in_use">That stream key is already live. Stop whatever else is broadcasting to it, then start again.</string>
+    <string name="stream_error_unreachable">Could not reach the destination. Check the server URL, and that this phone has an internet connection.</string>
+    <string name="stream_error_tls">The destination refused the secure connection. Check its certificate, or use rtmp:// if it does not offer TLS.</string>
+    <string name="stream_error_failed">Streaming failed and is retrying. See Diagnostics in the menu for details.</string>
 </resources>

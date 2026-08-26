@@ -314,9 +314,6 @@ class MainActivity : AppCompatActivity() {
                 is RestreamMachine.Effect.Toast -> {
                     toast(effect.textResource)
                 }
-                is RestreamMachine.Effect.ToastDetail -> {
-                    toast(effect.text)
-                }
             }
         }
         render()
@@ -522,10 +519,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(@StringRes message: Int) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-
-    private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 

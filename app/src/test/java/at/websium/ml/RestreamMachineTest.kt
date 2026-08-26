@@ -191,7 +191,22 @@ class RestreamMachineTest {
         assertEquals(
             listOf(
                 Effect.Log("stream", "restream failed: Could not connect to server"),
-                Effect.ToastDetail("Could not connect to server"),
+                Effect.Toast(R.string.stream_error_failed),
+            ),
+            step.effects,
+        )
+    }
+
+    @Test
+    fun aRecognisedEgressFailureIsToastedAsItsCauseAndLoggedAsItArrived() {
+        arm()
+        val reason = "Failed to connect: gst-resource-error-quark 5 publish denied: denied"
+        val step = machine.onEgressFailed(reason)
+
+        assertEquals(
+            listOf(
+                Effect.Log("stream", "restream failed: $reason"),
+                Effect.Toast(R.string.stream_error_key_rejected),
             ),
             step.effects,
         )

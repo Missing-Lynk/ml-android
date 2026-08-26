@@ -24,6 +24,8 @@ The broadcast always carries an audio track, because it is what holds the connec
 
 Twitch and Kick ingest H.264 only, so arming either of them against a goggle sending H.265 is refused with the menu path to change it. YouTube and self-hosted servers take both.
 
+A broadcast that will not start says what the destination objected to: a stream key it rejected, a key something else is already broadcasting to, a server it could not reach, or a certificate it refused. Anything else reads as a plain failure and points at Diagnostics, which carries the streaming library's own wording.
+
 ## Requirements
 
 - The goggle connected with a USB-A to USB-C OTG adapter. A plain USB-C to USB-C cable does not work, since the phone has to act as the USB host.
