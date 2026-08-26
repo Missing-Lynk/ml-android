@@ -10,9 +10,17 @@ The stream URL is a preference (Settings), defaulting to the goggle's address. P
 
 States: waiting for the goggle (no matching network, or the RTSP server not up yet), connecting, no video (connected for seven seconds with nothing arriving, so the air unit is the thing to check), playing (fullscreen landscape), and reconnecting (frames stalled; auto-retry). Short feed dropouts are ridden out without a reconnect: the RF link resets Tx-side for a few seconds routinely and the stream resumes on its own. When an attempt fails outright, the screen carries the player's own reason underneath, which separates a refused connection from a missing decoder.
 
-Leaving a session (back, or the on-video back control) parks the app on a Connect button, so a deliberate disconnect sticks. Unplugging the goggle re-arms auto-connect for the next plug-in.
+Leaving a session (back, or the on-video back control) parks the app on a Connect button, so a deliberate disconnect sticks, and ends a restream with it. Unplugging the goggle re-arms auto-connect for the next plug-in.
 
 **Diagnostics** in the menu holds an on-device log of the session: the decoder that was chosen, pipeline rebuilds, stream errors and state transitions. Share exports it, which is the useful thing to attach to a bug report.
+
+## Restreaming
+
+Tap the video while playing to reveal the controls, and the second one arms a restream: the same encoded video the phone is decoding is pushed to the ingest set in **Settings > Streaming destination**, which takes the server URL with the stream key on the end as one pasted string. The key is masked everywhere it is shown, including in the diagnostics log.
+
+The restream is a pipeline of its own beside the player, so arming and disarming never interrupt the picture, and an ingest that refuses the stream costs the broadcast rather than the flight view. A badge over the video says whether it is carrying or between reconnect attempts. It keeps running with the app off screen or the phone locked, and it survives losing the goggle: unplug for a battery swap and the broadcast picks up again with the next session, without touching the toggle.
+
+Twitch and Kick ingest H.264 only, so arming either of them against a goggle sending H.265 is refused with the menu path to change it. YouTube and self-hosted servers take both.
 
 ## Requirements
 
