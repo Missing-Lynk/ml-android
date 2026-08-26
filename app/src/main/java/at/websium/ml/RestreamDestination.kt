@@ -5,9 +5,10 @@ package at.websium.ml
  * separately; joining them with a slash is what every encoder asks for, so the app takes the
  * whole thing as one pasted string rather than two fields.
  *
- * The trailing segment is a credential. Anything that displays or logs a destination shows
- * [redactStreamKey] instead, because Diagnostics has a Share button and a stream key in a bug
- * report lets a stranger broadcast to the reporter's channel.
+ * The trailing segment is a credential. A saved destination carries a name, which is what the
+ * notification and the diagnostics log show; [redactStreamKey] is for the one screen that has to
+ * show the URL itself, because Diagnostics has a Share button and a stream key in a bug report
+ * lets a stranger broadcast to the reporter's channel.
  */
 private const val KEY_MASK = "***"
 

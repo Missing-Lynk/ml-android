@@ -1,8 +1,8 @@
 package at.websium.ml
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import com.google.android.material.appbar.MaterialToolbar
@@ -29,23 +29,27 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     class SettingsFragment : PreferenceFragmentCompat() {
+
+        private var destinations: Preference? = null
+
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.root_preferences, rootKey)
 
-            /*
-             * The destination's last path segment is a stream key. Show it masked, so the value
-             * is recognisable enough to confirm without being readable over a shoulder or in a
-             * screenshot attached to a bug report.
-             */
-            val destination = findPreference<EditTextPreference>(getString(R.string.pref_rtmp_key))
-            destination?.summaryProvider = Preference.SummaryProvider<EditTextPreference> { preference ->
-                val stored = preference.text
-                if (stored.isNullOrBlank()) {
-                    getString(R.string.pref_rtmp_unset)
-                } else {
-                    redactStreamKey(stored)
-                }
+            destinations = findPreference(getString(R.string.pref_destinations_key))
+            destinations?.setOnPreferenceClickListener {
+                startActivity(Intent(requireContext(), DestinationsActivity::class.java))
+                true
             }
+        }
+
+        /**
+         * The active destination's name, refreshed here because it can change on the screen this
+         * row opens. The name rather than the URL: the URL ends in a stream key.
+         */
+        override fun onResume() {
+            super.onResume()
+            val active = DestinationStore(requireContext()).read().active
+            destinations?.summary = active?.label ?: getString(R.string.pref_rtmp_unset)
         }
     }
 }

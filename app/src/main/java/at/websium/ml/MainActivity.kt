@@ -26,7 +26,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.preference.PreferenceManager
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
@@ -60,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private var player: StreamPlayer? = null
     private var lastPlayerFailure: String? = null
     private lateinit var link: GoggleLink
+    private lateinit var destinations: DestinationStore
 
     private val machine = ConnectionMachine()
     private val restream = RestreamMachine()
@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         link = GoggleLink(this)
+        destinations = DestinationStore(this)
 
         toolbar = findViewById(R.id.toolbar)
         videoContainer = findViewById(R.id.video_container)
@@ -159,6 +160,14 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         foreground = true
+        /*
+         * Coming back from Settings, where the armed destination may have been deleted. An edit
+         * to it is picked up at the next re-arm instead, but a deletion leaves the broadcast with
+         * nowhere to go and has to end it now.
+         */
+        if (restream.isArmed && armedDestination() == null) {
+            applyRestream(restream.onDestinationDeleted())
+        }
     }
 
     override fun onStop() {
@@ -222,7 +231,7 @@ class MainActivity : AppCompatActivity() {
                         if (ensurePlayer() == null) {
                             playerFailure = lastPlayerFailure
                         } else if (!hadPlayer) {
-                            applyRestream(restream.onPlayerCreated(configuredDestination()))
+                            applyRestream(restream.onPlayerCreated(armedDestination()))
                         }
                     }
                 }
@@ -270,7 +279,7 @@ class MainActivity : AppCompatActivity() {
                     player?.setRestream(null)
                 }
                 is RestreamMachine.Effect.StartKeepAlive -> {
-                    RestreamService.start(this, effect.destination)
+                    RestreamService.start(this, effect.label)
                 }
                 RestreamMachine.Effect.StopKeepAlive -> {
                     RestreamService.stop(this)
@@ -432,19 +441,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * The destination as Settings currently holds it, unvalidated: judging it belongs to
-     * [RestreamMachine], which is where it can be tested.
-     *
-     * Read at the moment of arming rather than cached, so editing it in Settings and coming back
-     * takes effect without restarting the session.
+     * The destination the broadcast was armed to, as the store holds it now. Looked up by id
+     * rather than taken from the active selection, so an edit to it lands on the next re-arm
+     * while changing which destination is active leaves a broadcast in flight where it is.
      */
-    private fun configuredDestination(): String? {
-        return PreferenceManager.getDefaultSharedPreferences(this)
-            .getString(getString(R.string.pref_rtmp_key), null)
+    private fun armedDestination(): Destination? {
+        return destinations.read().byId(restream.armedDestinationId)
     }
 
+    /**
+     * Read at the moment of arming rather than cached, so editing the destination in Settings and
+     * coming back takes effect without restarting the session.
+     */
     private fun toggleStreaming() {
-        applyRestream(restream.onToggleTapped(configuredDestination()))
+        applyRestream(restream.onToggleTapped(destinations.read().active))
     }
 
     /**

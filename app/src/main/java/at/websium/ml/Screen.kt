@@ -17,7 +17,7 @@ enum class Chrome { TOOLBAR, IMMERSIVE }
  */
 sealed interface Hint {
     /** the fixed setup pointer, for a user with no goggle or no stream yet */
-    data class Copy(@StringRes val textResource: Int) : Hint
+    data class Copy(@param:StringRes val textResource: Int) : Hint
 
     /** what the player said went wrong, shown while the next attempt runs */
     data class Detail(val text: String) : Hint
@@ -28,7 +28,7 @@ sealed interface Hint {
  * status line with no panel behind it is therefore unrepresentable.
  */
 data class StatusPanel(
-    @StringRes val textResource: Int,
+    @param:StringRes val textResource: Int,
     val isSpinnerVisible: Boolean = false,
     val isImageVisible: Boolean = false,
     val hint: Hint? = null,
@@ -39,8 +39,8 @@ data class StatusPanel(
  * The arm/disarm control's two faces.
  */
 enum class Toggle(
-    @DrawableRes val iconResource: Int,
-    @StringRes val descriptionResource: Int,
+    @param:DrawableRes val iconResource: Int,
+    @param:StringRes val descriptionResource: Int,
 ) {
     START(R.drawable.ic_stream_start, R.string.stream_start),
     STOP(R.drawable.ic_stream_stop, R.string.stream_stop),
@@ -51,8 +51,8 @@ enum class Toggle(
  * carrying says so rather than showing the same thing as one that is.
  */
 enum class Badge(
-    @StringRes val textResource: Int,
-    @DrawableRes val iconResource: Int,
+    @param:StringRes val textResource: Int,
+    @param:DrawableRes val iconResource: Int,
 ) {
     LIVE(R.string.stream_badge_live, R.drawable.ic_dot_live),
     RECONNECTING(R.string.stream_badge_reconnecting, R.drawable.ic_dot_reconnecting),

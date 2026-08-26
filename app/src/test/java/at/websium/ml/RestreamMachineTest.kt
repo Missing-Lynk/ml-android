@@ -4,6 +4,7 @@ import at.websium.ml.RestreamMachine.Effect
 import at.websium.ml.RestreamMachine.State
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,11 +19,11 @@ class RestreamMachineTest {
 
     private val machine = RestreamMachine()
 
-    private val destination = "rtmp://live.twitch.tv/app/live_123_SECRET"
-    private val redacted = "rtmp://live.twitch.tv/app/***"
+    private val url = "rtmp://live.twitch.tv/app/live_123_SECRET"
+    private val destination = Destination(id = "d1", label = "Twitch live", url = url)
 
     /** arm the way a toggle tap does, from a state with a codec already negotiated */
-    private fun arm(codec: String = "H264", target: String = destination) {
+    private fun arm(codec: String = "H264", target: Destination = destination) {
         machine.onCodecNegotiated(codec)
         machine.onToggleTapped(target)
     }
@@ -44,23 +45,24 @@ class RestreamMachineTest {
 
     @Test
     fun armingWithSomethingThatIsNotAnIngestUrlStaysOff() {
-        val step = machine.onToggleTapped("https://example.com/live")
+        val step = machine.onToggleTapped(destination.copy(url = "https://example.com/live"))
         assertEquals(State.OFF, step.state)
         assertEquals(listOf(Effect.Toast(R.string.stream_needs_destination)), step.effects)
     }
 
     @Test
-    fun armingPointsThePlayerAtTheKeyAndTheNotificationAtTheMask() {
-        val step = machine.onToggleTapped("  $destination  ")
+    fun armingPointsThePlayerAtTheKeyAndNamesTheDestinationEverywhereElse() {
+        val step = machine.onToggleTapped(destination.copy(url = "  $url  "))
 
         assertEquals(State.ARMED, step.state)
         assertTrue(machine.isArmed)
+        assertEquals("d1", machine.armedDestinationId)
         assertEquals(
             listOf(
                 Effect.RequestNotificationPermission,
-                Effect.ArmEgress(destination),
-                Effect.StartKeepAlive(redacted),
-                Effect.Log("stream", "started to $redacted"),
+                Effect.ArmEgress(url),
+                Effect.StartKeepAlive("Twitch live"),
+                Effect.Log("stream", "started to Twitch live"),
                 Effect.Toast(R.string.stream_started),
             ),
             step.effects,
@@ -84,7 +86,7 @@ class RestreamMachineTest {
         assertEquals(State.OFF, step.state)
         assertEquals(
             listOf(
-                Effect.Log("stream", "refused: H265 to $redacted"),
+                Effect.Log("stream", "refused: H265 to Twitch live"),
                 Effect.Toast(R.string.stream_codec_rejected),
             ),
             step.effects,
@@ -94,7 +96,9 @@ class RestreamMachineTest {
     @Test
     fun anUnrecognisedIngestIsGivenTheStreamAndAllowedToRefuseItItself() {
         machine.onCodecNegotiated("H265")
-        val step = machine.onToggleTapped("rtmp://mediamtx.local/live/KEY")
+        val step = machine.onToggleTapped(
+            Destination(id = "d2", label = "Local", url = "rtmp://mediamtx.local/live/KEY")
+        )
         assertEquals(State.ARMED, step.state)
     }
 
@@ -216,8 +220,8 @@ class RestreamMachineTest {
         assertEquals(State.ARMED, step.state)
         assertEquals(
             listOf(
-                Effect.ArmEgress(destination),
-                Effect.Log("stream", "re-armed $redacted"),
+                Effect.ArmEgress(url),
+                Effect.Log("stream", "re-armed Twitch live"),
             ),
             step.effects,
         )
@@ -229,8 +233,19 @@ class RestreamMachineTest {
         machine.onPlayerGone()
 
         val moved = "rtmp://a.rtmp.youtube.com/live2/OTHER"
-        val step = machine.onPlayerCreated(moved)
+        val step = machine.onPlayerCreated(destination.copy(url = moved))
         assertEquals(Effect.ArmEgress(moved), step.effects.first())
+    }
+
+    @Test
+    fun theBroadcastNamesTheRecordItWasArmedTo() {
+        // the caller looks the destination up by this id, so a change of active entry cannot
+        // move a broadcast already in flight
+        assertNull(machine.armedDestinationId)
+        arm()
+        assertEquals("d1", machine.armedDestinationId)
+        machine.onSessionLeft()
+        assertNull(machine.armedDestinationId)
     }
 
     @Test
@@ -248,6 +263,32 @@ class RestreamMachineTest {
             ),
             step.effects,
         )
+    }
+
+    @Test
+    fun deletingTheArmedDestinationEndsTheBroadcastAtOnce() {
+        // the alternative is carrying on to a destination the user has thrown away
+        arm()
+        machine.onEgressLive(true)
+        val step = machine.onDestinationDeleted()
+
+        assertEquals(State.OFF, step.state)
+        assertEquals(
+            listOf(
+                Effect.Log("stream", "the destination was deleted; broadcast ended"),
+                Effect.Toast(R.string.stream_stopped),
+                Effect.DisarmEgress,
+                Effect.StopKeepAlive,
+            ),
+            step.effects,
+        )
+    }
+
+    @Test
+    fun aDeletionWithNothingArmedSaysNothing() {
+        val step = machine.onDestinationDeleted()
+        assertEquals(State.OFF, step.state)
+        assertTrue(step.effects.isEmpty())
     }
 
     @Test

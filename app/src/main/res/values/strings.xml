@@ -45,6 +45,23 @@
     <string name="pref_rtmp_title">Streaming destination</string>
     <string name="pref_rtmp_note">Paste the full ingest URL with your stream key on the end, for example rtmp://live.twitch.tv/app/YOUR-KEY. Add ?bandwidthtest=true to test against Twitch Inspector without going live. The key is hidden once saved and is kept out of the diagnostics log.</string>
     <string name="pref_rtmp_unset">Not set</string>
+    <string name="pref_destinations_key" translatable="false">destinations</string>
+    <string name="destinations_title">Streaming destinations</string>
+    <string name="destinations_empty">No destinations yet. Add one to stream a session.</string>
+    <string name="destinations_add">Add destination</string>
+    <string name="destination_unnamed">Destination</string>
+    <string name="destination_label">Name</string>
+    <string name="destination_label_hint">Twitch live</string>
+    <string name="destination_url">Server URL with stream key</string>
+    <string name="destination_url_hint">rtmp://live.twitch.tv/app/YOUR-KEY</string>
+    <string name="destination_save">Save</string>
+    <string name="destination_cancel">Cancel</string>
+    <string name="destination_edit">Edit</string>
+    <string name="destination_delete">Delete</string>
+    <string name="destination_delete_confirm">Delete \"%1$s\"?</string>
+    <string name="destination_needs_url">A destination needs an rtmp:// or rtmps:// URL</string>
+    <string name="destination_more">More actions for %1$s</string>
+    <string name="destination_select">Stream to %1$s</string>
     <string name="stream_start">Start streaming</string>
     <string name="stream_stop">Stop streaming</string>
     <string name="stream_needs_destination">Set a streaming destination in Settings first</string>

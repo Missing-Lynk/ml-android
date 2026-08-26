@@ -13,8 +13,8 @@ import androidx.annotation.StringRes
  * rebuilt underneath it.
  *
  * The destination is passed in on each arming event rather than held from an earlier one, so
- * editing it in Settings and coming back takes effect without restarting the session. It carries
- * a stream key on the end, so it reaches an effect only as [redactStreamKey] leaves it.
+ * editing it in Settings and coming back takes effect without restarting the session. Its URL
+ * carries a stream key, so everything a person or a log sees names it by its label instead.
  */
 class RestreamMachine {
 
@@ -41,10 +41,10 @@ class RestreamMachine {
         data object DisarmEgress : Effect
 
         /**
-         * Bring the keep-alive service up for a broadcast to [destination], which is already
-         * redacted: the service shows it in a notification.
+         * Bring the keep-alive service up for a broadcast to the destination named [label], which
+         * the service shows in a notification.
          */
-        data class StartKeepAlive(val destination: String) : Effect
+        data class StartKeepAlive(val label: String) : Effect
 
         data object StopKeepAlive : Effect
 
@@ -54,7 +54,7 @@ class RestreamMachine {
          */
         data object RequestNotificationPermission : Effect
 
-        data class Toast(@StringRes val textResource: Int) : Effect
+        data class Toast(@param:StringRes val textResource: Int) : Effect
 
         /** a message the app did not write, such as the reason the egress gave up */
         data class ToastDetail(val text: String) : Effect
@@ -71,17 +71,24 @@ class RestreamMachine {
     val isArmed: Boolean
         get() = state != State.OFF
 
-    /** the destination the egress is armed to, key included */
-    private var destination: String? = null
+    /** the destination the egress is armed to */
+    private var armed: Destination? = null
+
+    /**
+     * Which destination the broadcast was armed to, so a re-arm follows the one in flight rather
+     * than whichever is active by then. Null when nothing is armed.
+     */
+    val armedDestinationId: String?
+        get() = armed?.id
 
     /** the codec the SDP named, which decides whether a destination will take the stream */
     private var negotiatedCodec: String? = null
 
     /**
-     * The user tapped the toggle. [configured] is the destination as Settings currently holds
-     * it, unvalidated.
+     * The user tapped the toggle. [selected] is the active destination, or null when none is
+     * saved. Its URL is judged here rather than by the caller.
      */
-    fun onToggleTapped(configured: String?): Step {
+    fun onToggleTapped(selected: Destination?): Step {
         if (isArmed) {
             return disarm(
                 Effect.Log("stream", "stopped by the user"),
@@ -89,31 +96,31 @@ class RestreamMachine {
             )
         }
 
-        if (!isRestreamUrl(configured)) {
+        if (selected == null || !isRestreamUrl(selected.url)) {
             return Step(state, listOf(Effect.Toast(R.string.stream_needs_destination)))
         }
 
-        val target = configured!!.trim()
+        val target = selected.copy(url = selected.url.trim())
         val codec = negotiatedCodec
-        if (codec != null && !isCodecAccepted(target, codec)) {
+        if (codec != null && !isCodecAccepted(target.url, codec)) {
             return Step(
                 state,
                 listOf(
-                    Effect.Log("stream", "refused: $codec to ${redactStreamKey(target)}"),
+                    Effect.Log("stream", "refused: $codec to ${target.label}"),
                     Effect.Toast(R.string.stream_codec_rejected),
                 ),
             )
         }
 
-        destination = target
+        armed = target
         state = State.ARMED
         return Step(
             state,
             listOf(
                 Effect.RequestNotificationPermission,
-                Effect.ArmEgress(target),
-                Effect.StartKeepAlive(redactStreamKey(target)),
-                Effect.Log("stream", "started to ${redactStreamKey(target)}"),
+                Effect.ArmEgress(target.url),
+                Effect.StartKeepAlive(target.label),
+                Effect.Log("stream", "started to ${target.label}"),
                 Effect.Toast(R.string.stream_started),
             ),
         )
@@ -124,26 +131,43 @@ class RestreamMachine {
      * across instances, so an armed broadcast is armed again here: losing the goggle and getting
      * it back carries the broadcast with it.
      *
-     * A destination that has gone from Settings in the meantime ends the broadcast, because
-     * there is nothing left to arm.
+     * [current] is the armed destination as the store holds it now, looked up by
+     * [armedDestinationId], so an edit to it lands while a change of which destination is active
+     * does not move a broadcast in flight. A destination deleted in the meantime arrives as null
+     * and ends the broadcast, because there is nothing left to arm.
      */
-    fun onPlayerCreated(configured: String?): Step {
+    fun onPlayerCreated(current: Destination?): Step {
         if (!isArmed) {
             return Step(state)
         }
 
-        if (!isRestreamUrl(configured)) {
+        if (current == null || !isRestreamUrl(current.url)) {
             return disarm(Effect.Log("stream", "the destination is gone; broadcast ended"))
         }
 
-        val target = configured!!.trim()
-        destination = target
+        val target = current.copy(url = current.url.trim())
+        armed = target
         return Step(
             state,
             listOf(
-                Effect.ArmEgress(target),
-                Effect.Log("stream", "re-armed ${redactStreamKey(target)}"),
+                Effect.ArmEgress(target.url),
+                Effect.Log("stream", "re-armed ${target.label}"),
             ),
+        )
+    }
+
+    /**
+     * The destination the broadcast is armed to was deleted. Nothing is left to broadcast to, so
+     * the broadcast ends rather than carrying on to a destination the user has thrown away.
+     */
+    fun onDestinationDeleted(): Step {
+        if (!isArmed) {
+            return Step(state)
+        }
+
+        return disarm(
+            Effect.Log("stream", "the destination was deleted; broadcast ended"),
+            Effect.Toast(R.string.stream_stopped),
         )
     }
 
@@ -215,7 +239,7 @@ class RestreamMachine {
      * and the session ends here, so it is stopped whether or not anything was armed.
      */
     fun onShutdown(): Step {
-        destination = null
+        armed = null
         negotiatedCodec = null
         state = State.OFF
 
@@ -223,7 +247,7 @@ class RestreamMachine {
     }
 
     private fun disarm(vararg leadingEffects: Effect): Step {
-        destination = null
+        armed = null
         state = State.OFF
         return Step(
             state,

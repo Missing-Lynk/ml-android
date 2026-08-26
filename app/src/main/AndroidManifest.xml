@@ -49,6 +49,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".DestinationsActivity"
+            android:exported="false"
+            android:label="@string/destinations_title"
+            android:parentActivityName=".SettingsActivity" />
+
+        <activity
             android:name=".DiagnosticsActivity"
             android:exported="false"
             android:label="@string/diagnostics_title"

@@ -38,8 +38,8 @@ class RestreamService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val destination = intent?.getStringExtra(EXTRA_DESTINATION)
-        goForeground(buildNotification(destination))
+        val label = intent?.getStringExtra(EXTRA_LABEL)
+        goForeground(buildNotification(label))
         acquireLocks()
         /*
          * Not sticky: the restream belongs to a session the activity owns, and a service restarted
@@ -63,7 +63,7 @@ class RestreamService : Service() {
         }
     }
 
-    private fun buildNotification(destination: String?): Notification {
+    private fun buildNotification(label: String?): Notification {
         createChannel()
 
         val open = PendingIntent.getActivity(
@@ -77,7 +77,7 @@ class RestreamService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_stream)
             .setContentTitle(getString(R.string.stream_notification_title))
-            .setContentText(destination ?: getString(R.string.stream_notification_text))
+            .setContentText(label ?: getString(R.string.stream_notification_text))
             .setContentIntent(open)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -132,15 +132,16 @@ class RestreamService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val WIFI_LOCK_TAG = "MissingLynk:restream"
         private const val WAKE_LOCK_TAG = "MissingLynk:restream"
-        private const val EXTRA_DESTINATION = "destination"
+        private const val EXTRA_LABEL = "label"
 
         /**
-         * Bring the service up for a broadcast to [destination], which must already be redacted:
-         * it is shown in a notification, and a stream key must never reach one.
+         * Bring the service up for a broadcast to the destination called [label]. The name rather
+         * than the URL, because the notification is read by anyone looking at the phone and the
+         * URL ends in a stream key.
          */
-        fun start(context: Context, destination: String) {
+        fun start(context: Context, label: String) {
             val intent = Intent(context, RestreamService::class.java)
-                .putExtra(EXTRA_DESTINATION, destination)
+                .putExtra(EXTRA_LABEL, label)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

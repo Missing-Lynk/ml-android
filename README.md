@@ -16,7 +16,7 @@ Leaving a session (back, or the on-video back control) parks the app on a Connec
 
 ## Restreaming
 
-Tap the video while playing to reveal the controls, and the second one arms a restream: the same encoded video the phone is decoding is pushed to the ingest set in **Settings > Streaming destination**, which takes the server URL with the stream key on the end as one pasted string. The key is masked everywhere it is shown, including in the diagnostics log.
+Tap the video while playing to reveal the controls, and the second one arms a restream: the same encoded video the phone is decoding is pushed to whichever destination is selected in **Settings > Streaming destination**. Destinations are saved with a name, so a "Twitch Inspector" entry for testing and a "Twitch live" entry for flying sit side by side and the toggle stays one tap. Each takes the server URL with the stream key on the end as one pasted string; the key is masked wherever the URL is shown, and everywhere else names the destination instead, including the notification and the diagnostics log.
 
 The restream is a pipeline of its own beside the player, so arming and disarming never interrupt the picture, and an ingest that refuses the stream costs the broadcast rather than the flight view. A badge over the video says whether it is carrying or between reconnect attempts. It keeps running with the app off screen or the phone locked, and it survives losing the goggle: unplug for a battery swap and the broadcast picks up again with the next session, without touching the toggle.
 
