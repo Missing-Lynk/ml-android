@@ -21,4 +21,18 @@
         app:title="@string/pref_rtmp_title"
         app:iconSpaceReserved="false" />
 
+    <ListPreference
+        app:key="@string/pref_audio_key"
+        app:title="@string/pref_audio_title"
+        app:entries="@array/audio_source_entries"
+        app:entryValues="@array/audio_source_values"
+        app:defaultValue="silence"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        app:summary="@string/pref_audio_note"
+        app:selectable="false"
+        app:iconSpaceReserved="false" />
+
 </PreferenceScreen>

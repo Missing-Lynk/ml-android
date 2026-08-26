@@ -14,6 +14,13 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- The microphone is one of the two audio sources a restream can carry. Android gates it on
+         while-in-use for a service, so the service is promoted from the video screen rather than
+         from the background, and it claims the microphone type only when that source is chosen
+         and the permission is held. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
     <application
         android:name=".MissingLynkApp"
         android:allowBackup="true"
@@ -63,7 +70,7 @@
         <service
             android:name=".RestreamService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback|microphone" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

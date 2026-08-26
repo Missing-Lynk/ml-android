@@ -29,6 +29,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.preference.PreferenceManager
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
@@ -294,13 +295,15 @@ class MainActivity : AppCompatActivity() {
                     Diagnostics.log(effect.tag, effect.message)
                 }
                 is RestreamMachine.Effect.ArmEgress -> {
-                    player?.setRestream(effect.url)
+                    player?.setRestream(effect.url, audioSource())
                 }
                 RestreamMachine.Effect.DisarmEgress -> {
                     player?.setRestream(null)
                 }
                 is RestreamMachine.Effect.StartKeepAlive -> {
-                    RestreamService.start(this, effect.label)
+                    RestreamService.start(
+                        this, effect.label, audioSource() == AudioSource.MICROPHONE
+                    )
                 }
                 RestreamMachine.Effect.StopKeepAlive -> {
                     RestreamService.stop(this)
@@ -476,6 +479,25 @@ class MainActivity : AppCompatActivity() {
      * Read at the moment of arming rather than cached, so editing the destination in Settings and
      * coming back takes effect without restarting the session.
      */
+    /**
+     * What the audio track carries, read when the egress is armed so a change in Settings takes
+     * effect at the next arming. The microphone is taken only while its permission is held: it
+     * can be revoked between sessions, and a silent track is what a revoked one falls back to.
+     */
+    private fun audioSource(): AudioSource {
+        val stored = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString(getString(R.string.pref_audio_key), null)
+        if (audioSourceFor(stored) != AudioSource.MICROPHONE) {
+            return AudioSource.SILENCE
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return AudioSource.SILENCE
+        }
+        return AudioSource.MICROPHONE
+    }
+
     private fun toggleStreaming() {
         applyRestream(restream.onToggleTapped(destinations.read().active))
     }

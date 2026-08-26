@@ -61,11 +61,14 @@ interface StreamPlayer {
     var onRestreamLive: ((Boolean) -> Unit)?
 
     /**
-     * Start the restream to [url], or stop it with null. Takes effect immediately and does not
-     * disturb playback: the egress is a pipeline of its own, started and stopped beside the
-     * player.
+     * Start the restream to [url] with [audio] on its audio track, or stop it with null. Takes
+     * effect immediately and does not disturb playback: the egress is a pipeline of its own,
+     * started and stopped beside the player.
+     *
+     * A microphone that will not open costs the audio track rather than the broadcast: the
+     * egress rebuilds with silence and reports it through [onRestreamFailed]'s log.
      */
-    fun setRestream(url: String?)
+    fun setRestream(url: String?, audio: AudioSource = AudioSource.SILENCE)
 
     /** monotonic count of frames that have reached the sink; 0 means no media is flowing */
     val frameCount: Int

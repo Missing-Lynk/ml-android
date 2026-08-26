@@ -64,8 +64,8 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
         nativePlay()
     }
 
-    override fun setRestream(url: String?) {
-        nativeSetRestream(url)
+    override fun setRestream(url: String?, audio: AudioSource) {
+        nativeSetRestream(url, audio == AudioSource.MICROPHONE)
     }
 
     override fun release() {
@@ -144,7 +144,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     private external fun nativeInit()
     private external fun nativeFinalize()
     private external fun nativeSetUri(uri: String)
-    private external fun nativeSetRestream(url: String?)
+    private external fun nativeSetRestream(url: String?, useMicrophone: Boolean)
     private external fun nativePlay()
     private external fun nativeSurfaceInit(surface: Surface)
     private external fun nativeSurfaceFinalize()

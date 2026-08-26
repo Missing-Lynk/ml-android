@@ -32,12 +32,13 @@ include $(GSTREAMER_NDK_BUILD_PATH)/plugins.mk
 # behave badly with video-only, and because the audio is decoupled from the video it keeps
 # flowing through an RF dropout, which holds the session open instead of ending the broadcast.
 #   gio = the TLS transport rtmps rides on.
+#   opensles = the microphone, one of the two sources the restream's audio track can carry.
 #   app = the appsrc heading the egress pipeline. The egress is a pipeline of its own, fed by a
 # pad probe on the player's tee, so a destination that fails returns its error to its own bus
 # and its own flow path instead of upstream into the leg carrying the picture.
 GSTREAMER_PLUGINS := coreelements videoconvertscale opengl androidmedia \
                      rtsp rtp rtpmanager udp tcp videoparsersbad libav playback \
-                     flv rtmp2 voaacenc audiotestsrc audioconvert audioresample gio app
+                     flv rtmp2 voaacenc audiotestsrc audioconvert audioresample opensles gio app
 # openssl is here for the GIO TLS module below: G_IO_MODULES links the module itself but not the
 # libssl/libcrypto it calls into, which otherwise fails as a wall of undefined X509_* symbols.
 GSTREAMER_EXTRA_DEPS := gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-rtp-1.0 \

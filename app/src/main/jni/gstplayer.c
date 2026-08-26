@@ -59,6 +59,8 @@ typedef struct _CustomData
     GstElement *downstream;    /* everything below rtspsrc, built once the codec is known */
     gchar *rtmp_url;           /* restream destination, key included; never logged */
     gboolean restream_armed;   /* whether the egress should be live */
+    gboolean restream_use_mic; /* the audio track carries the microphone rather than silence */
+    gboolean restream_mic_failed; /* the microphone would not open; latched to silence */
     gboolean codec_is_h264;    /* what the SDP named, so the egress can be built any time */
     GstElement *restream_pipeline; /* the egress pipeline while streaming, else NULL */
     GstElement *restream_src;  /* its appsrc; only ever touched with the feed probe removed */
@@ -688,9 +690,16 @@ static void restream_error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
     notify_log(data, line);
     g_free(line);
 
-    /* One toast per outage, not one per retry: the latch is still clear on the failure that
-     * begins an outage and set for every attempt after it. */
-    if (!data->restream_reported_down) {
+    /* A microphone that will not open costs the audio track, not the broadcast: the retry below
+     * rebuilds with silence and the picture never notices. Latched for the session, because
+     * whatever holds the device is unlikely to let go mid-flight. */
+    if (data->restream_use_mic && !data->restream_mic_failed &&
+        g_strcmp0(GST_OBJECT_NAME(msg->src), "micsrc") == 0) {
+        data->restream_mic_failed = TRUE;
+        notify_log(data, "microphone would not open, carrying silence instead");
+    } else if (!data->restream_reported_down) {
+        /* One toast per outage, not one per retry: the latch is still clear on the failure that
+         * begins an outage and set for every attempt after it. */
         notify_restream(data, err->message);
     }
 
@@ -854,14 +863,23 @@ static gboolean restream_start(gpointer user_data)
     const gchar *parse = data->codec_is_h264 ? "h264parse" : "h265parse";
     const gchar *media = data->codec_is_h264 ? "video/x-h264,stream-format=avc,alignment=au"
                                              : "video/x-h265,stream-format=hvc1,alignment=au";
+
+    /* The track exists either way: an ingest handed video alone behaves badly, and audio that
+     * keeps flowing through an RF dropout is what holds the session open across a battery swap.
+     * The source is named so that an error from it can be told apart from one raised by the
+     * sink, which is a wrong stream key rather than a microphone that will not open. */
+    gboolean use_mic = data->restream_use_mic && !data->restream_mic_failed;
+    const gchar *audio = use_mic
+        ? "openslessrc name=micsrc ! audioconvert ! audioresample"
+        : "audiotestsrc name=micsrc wave=silence is-live=true ! audioconvert ! audioresample";
+
     gchar *desc = g_strdup_printf(
         "appsrc name=esrc is-live=true format=time do-timestamp=false max-bytes=%d block=false "
         "! queue name=equeue leaky=downstream max-size-buffers=0 max-size-time=0 max-size-bytes=%d "
         "! %s ! %s "
         "! flvmux name=mux streamable=true ! rtmp2sink name=rtmpsink sync=false "
-        "audiotestsrc wave=silence is-live=true ! audioconvert ! audioresample "
-        "! voaacenc bitrate=128000 ! mux.",
-        RESTREAM_QUEUE_BYTES, RESTREAM_QUEUE_BYTES, parse, media);
+        "%s ! voaacenc bitrate=128000 ! mux.",
+        RESTREAM_QUEUE_BYTES, RESTREAM_QUEUE_BYTES, parse, media, audio);
 
     GError *error = NULL;
     GstElement *pipeline = gst_parse_launch(desc, &error);
@@ -1096,7 +1114,7 @@ static void gst_native_set_uri(JNIEnv *env, jobject thiz, jstring uri)
 
 /* Start or stop the restream. A NULL url stops it. The egress is a pipeline of its own, started
  * and stopped beside the player, so the picture is never interrupted by going live or stopping. */
-static void gst_native_set_restream(JNIEnv *env, jobject thiz, jstring url)
+static void gst_native_set_restream(JNIEnv *env, jobject thiz, jstring url, jboolean use_mic)
 {
     CustomData *data = (CustomData *) (gsize) (*env)->GetLongField(env, thiz, custom_data_field_id);
     if (data == NULL) {
@@ -1111,6 +1129,8 @@ static void gst_native_set_restream(JNIEnv *env, jobject thiz, jstring url)
         const gchar *s = (*env)->GetStringUTFChars(env, url, NULL);
         data->rtmp_url = g_strdup(s);
         data->restream_armed = TRUE;
+        data->restream_use_mic = (use_mic == JNI_TRUE);
+        data->restream_mic_failed = FALSE;
         data->restream_backoff_ms = 0;
         data->restream_started_us = 0;
         data->restream_reported_down = FALSE;
@@ -1209,7 +1229,7 @@ static JNINativeMethod native_methods[] = {
     {"nativeInit", "()V", (void *) gst_native_init},
     {"nativeFinalize", "()V", (void *) gst_native_finalize},
     {"nativeSetUri", "(Ljava/lang/String;)V", (void *) gst_native_set_uri},
-    {"nativeSetRestream", "(Ljava/lang/String;)V", (void *) gst_native_set_restream},
+    {"nativeSetRestream", "(Ljava/lang/String;Z)V", (void *) gst_native_set_restream},
     {"nativePlay", "()V", (void *) gst_native_play},
     {"nativeSurfaceInit", "(Landroid/view/Surface;)V", (void *) gst_native_surface_init},
     {"nativeSurfaceFinalize", "()V", (void *) gst_native_surface_finalize},

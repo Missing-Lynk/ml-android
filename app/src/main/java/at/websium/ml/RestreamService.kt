@@ -39,7 +39,8 @@ class RestreamService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val label = intent?.getStringExtra(EXTRA_LABEL)
-        goForeground(buildNotification(label))
+        val usesMicrophone = intent?.getBooleanExtra(EXTRA_MICROPHONE, false) == true
+        goForeground(buildNotification(label), usesMicrophone)
         acquireLocks()
         /*
          * Not sticky: the restream belongs to a session the activity owns, and a service restarted
@@ -53,14 +54,27 @@ class RestreamService : Service() {
         super.onDestroy()
     }
 
-    private fun goForeground(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-        } else {
+    /**
+     * The microphone type is claimed only while that source is in use. Declaring it on every
+     * broadcast would need RECORD_AUDIO granted for any of them, and a silent track needs no
+     * such permission.
+     */
+    private fun goForeground(notification: Notification, usesMicrophone: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification)
+            return
         }
+
+        /*
+         * The microphone type arrived in API 30, a release after the types themselves. Android 10
+         * has no while-in-use restriction on the microphone for a foreground service, so there is
+         * nothing to claim there and the source works without it.
+         */
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        if (usesMicrophone && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        startForeground(NOTIFICATION_ID, notification, type)
     }
 
     private fun buildNotification(label: String?): Notification {
@@ -149,15 +163,17 @@ class RestreamService : Service() {
         private const val WIFI_LOCK_TAG = "MissingLynk:restream"
         private const val WAKE_LOCK_TAG = "MissingLynk:restream"
         private const val EXTRA_LABEL = "label"
+        private const val EXTRA_MICROPHONE = "microphone"
 
         /**
          * Bring the service up for a broadcast to the destination called [label]. The name rather
          * than the URL, because the notification is read by anyone looking at the phone and the
          * URL ends in a stream key.
          */
-        fun start(context: Context, label: String) {
+        fun start(context: Context, label: String, usesMicrophone: Boolean) {
             val intent = Intent(context, RestreamService::class.java)
                 .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_MICROPHONE, usesMicrophone)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

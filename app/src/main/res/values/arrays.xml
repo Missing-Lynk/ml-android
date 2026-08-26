@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- The values are matched by audioSourceFor; the app falls back to silence for anything
+         it does not recognise. -->
+    <string-array name="audio_source_entries">
+        <item>@string/audio_source_silence</item>
+        <item>@string/audio_source_microphone</item>
+    </string-array>
+
+    <string-array name="audio_source_values" translatable="false">
+        <item>silence</item>
+        <item>microphone</item>
+    </string-array>
+
+</resources>
