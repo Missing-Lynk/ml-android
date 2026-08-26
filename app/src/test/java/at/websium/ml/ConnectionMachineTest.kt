@@ -43,8 +43,7 @@ class ConnectionMachineTest {
         machine.onProbeResult(true, 0)
     }
 
-    // ---- searching for the goggle ----
-
+    // searching for the goggle
     @Test
     fun startsSearching() {
         assertEquals(State.SEARCHING, machine.state)
@@ -98,8 +97,7 @@ class ConnectionMachineTest {
         assertTrue(step.effects.isEmpty())
     }
 
-    // ---- the user leaving and coming back ----
-
+    // the user leaving and coming back
     @Test
     fun disconnectingWithTheGoggleStillAttachedParksInReady() {
         autoConnect()
@@ -154,8 +152,7 @@ class ConnectionMachineTest {
         assertEquals(State.CONNECTING, machine.onProbeResult(true, 3000).state)
     }
 
-    // ---- waiting for media ----
-
+    // waiting for media
     @Test
     fun framesPromoteToPlaying() {
         autoConnect()
@@ -218,8 +215,7 @@ class ConnectionMachineTest {
         assertTrue(step.effects.contains(Effect.Log("conn", "rebuild after 20000ms stuck (no frames)")))
     }
 
-    // ---- the session probe ----
-
+    // the session probe
     @Test
     fun aSessionWithNoMediaRechecksThePortEveryFiveSeconds() {
         autoConnect()
@@ -273,8 +269,7 @@ class ConnectionMachineTest {
         assertTrue(step.effects.isEmpty())
     }
 
-    // ---- playing ----
-
+    // playing
     @Test
     fun advancingFramesKeepPlaying() {
         autoConnect()
@@ -339,8 +334,7 @@ class ConnectionMachineTest {
         assertEquals(State.PLAYING, tick(15000, frames = 7).state)
     }
 
-    // ---- the player cannot be built ----
-
+    // the player cannot be built
     @Test
     fun anUnbuildablePlayerStopsAtUnavailable() {
         autoConnect()
@@ -405,8 +399,7 @@ class ConnectionMachineTest {
         assertFalse(State.UNAVAILABLE in ConnectionMachine.SESSION_STATES)
     }
 
-    // ---- invariants ----
-
+    // invariants
     @Test
     fun everySessionStateCarriesAPlayer() {
         // SESSION_STATES gates the back handler and the session probe; it must stay in step

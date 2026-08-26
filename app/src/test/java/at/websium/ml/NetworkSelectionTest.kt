@@ -39,8 +39,7 @@ class NetworkSelectionTest {
 
     private fun pick(vararg candidates: NetworkFacts) = pickGoggle(prefix, candidates.toList()) { it }
 
-    // ---- looksLikeGadget ----
-
+    // looksLikeGadget
     @Test
     fun theEthernetTransportIdentifiesAGadget() {
         assertTrue(looksLikeGadget(NetworkFacts(ethernet = true)))
@@ -66,8 +65,7 @@ class NetworkSelectionTest {
         assertFalse(looksLikeGadget(NetworkFacts(interfaceName = null)))
     }
 
-    // ---- selection ----
-
+    // selection
     @Test
     fun picksTheGoggleWhenItIsTheOnlyNetwork() {
         assertEquals(goggle, pick(goggle))

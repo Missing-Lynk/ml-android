@@ -104,8 +104,7 @@ static jmethodID on_codec_method_id;
 static jmethodID on_restream_method_id;
 static jmethodID on_restream_live_method_id;
 
-/* ---- JNI thread plumbing ---- */
-
+/* JNI thread plumbing */
 static JNIEnv *attach_current_thread(void)
 {
     JNIEnv *env;
@@ -232,8 +231,7 @@ static gboolean restream_start(gpointer user_data);
 static void restream_stop(CustomData *data, gboolean retry);
 static void restream_cancel_retry(CustomData *data);
 
-/* ---- bus callbacks (run on the loop thread) ---- */
-
+/* bus callbacks (run on the loop thread) */
 static void error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
 {
     GError *err;
@@ -347,8 +345,7 @@ static void deep_element_added_cb(GstBin *pipeline, GstBin *sub_bin, GstElement 
     }
 }
 
-/* ---- pipeline lifecycle (all on the loop thread) ---- */
-
+/* pipeline lifecycle (all on the loop thread) */
 static void teardown_pipeline(CustomData *data)
 {
     if (data->bus_source != NULL) {
@@ -515,8 +512,7 @@ static void pad_added_cb(GstElement *src, GstPad *pad, CustomData *data)
     }
 }
 
-/* ---- the egress, a pipeline of its own fed from the player's tee ---- */
-
+/* the egress, a pipeline of its own fed from the player's tee */
 /* Longest a reconnect waits. An uplink that comes back does so within seconds, and a wrong
  * stream key is worth retrying at a slow idle rather than giving up on: the pilot is flying and
  * cannot fix it now. */
@@ -942,8 +938,7 @@ static gboolean do_rebuild(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-/* ---- GLib main loop thread ---- */
-
+/* GLib main loop thread */
 static void *app_function(void *userdata)
 {
     CustomData *data = (CustomData *) userdata;
@@ -965,8 +960,7 @@ static void *app_function(void *userdata)
     return NULL;
 }
 
-/* ---- JNI entry points ---- */
-
+/* JNI entry points */
 static void gst_native_init(JNIEnv *env, jobject thiz)
 {
     CustomData *data = g_new0(CustomData, 1);

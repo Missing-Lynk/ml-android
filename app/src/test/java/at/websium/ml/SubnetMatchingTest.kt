@@ -13,8 +13,7 @@ import org.junit.Test
  */
 class SubnetMatchingTest {
 
-    // ---- subnetPrefix ----
-
+    // subnetPrefix
     @Test
     fun derivesThePrefixFromADottedAddress() {
         assertEquals("192.168.3.", subnetPrefix("192.168.3.101"))
@@ -52,8 +51,7 @@ class SubnetMatchingTest {
         assertNull(subnetPrefix("fe80::1"))
     }
 
-    // ---- addressesMatch ----
-
+    // addressesMatch
     @Test
     fun matchesAnAddressInTheSubnet() {
         assertTrue(addressesMatch("192.168.3.", listOf("192.168.3.222")))
