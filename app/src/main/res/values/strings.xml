@@ -67,8 +67,8 @@
     <string name="stream_needs_destination">Set a streaming destination in Settings first</string>
     <string name="stream_started">Streaming started</string>
     <string name="stream_stopped">Streaming stopped</string>
-    <string name="stream_badge_live">Streaming</string>
-    <string name="stream_badge_reconnecting">Reconnecting…</string>
+    <string name="stream_badge_live">Streaming to %1$s</string>
+    <string name="stream_badge_reconnecting">Reconnecting to %1$s</string>
     <string name="stream_notification_channel">Streaming</string>
     <string name="stream_notification_title">Streaming</string>
     <string name="stream_notification_text">Broadcast is running</string>

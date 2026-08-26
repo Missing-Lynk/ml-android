@@ -62,6 +62,9 @@ typedef struct _CustomData
     gboolean codec_is_h264;    /* what the SDP named, so the egress can be built any time */
     GstElement *restream_pipeline; /* the egress pipeline while streaming, else NULL */
     GstElement *restream_src;  /* its appsrc; only ever touched with the feed probe removed */
+    GstElement *restream_queue; /* the egress queue, read for its level; same lifetime as _src */
+    gint restream_congested;   /* the feed is waiting out a backlog (g_atomic) */
+    gint restream_dropped;     /* access units the backlog has cost this session (g_atomic) */
     GSource *restream_bus_source; /* watch on the egress pipeline's own bus */
     GstPad *restream_feed_pad; /* the tee sink pad the feed probe sits on */
     gulong restream_feed_probe; /* that probe's id, 0 when none is installed */
@@ -74,6 +77,7 @@ typedef struct _CustomData
     gint restream_sink_count;  /* buffers the egress sink has accepted (g_atomic) */
     gint watch_last_sink;      /* the two counts the stall watchdog compared last time, */
     gint watch_last_frames;    /* -1 when it has nothing to compare against yet */
+    gint watch_reported_congested; /* the backlog state the watchdog last reported */
     GMainContext *context;
     GMainLoop *main_loop;
     GSource *bus_source;       /* bus watch source, removed on teardown */
@@ -523,8 +527,16 @@ static void pad_added_cb(GstElement *src, GstPad *pad, CustomData *data)
 /* How often the stall watchdog samples. A stall is declared after one full quiet interval, so
  * recovery starts between one and two of these. */
 #define RESTREAM_WATCHDOG_S 5
-/* How much encoded video the egress may leave unsent before the queue starts dropping it. */
+/* How much encoded video the egress may leave unsent before the queue starts dropping it. The
+ * queue dropping is the backstop; the feed below stops well short of it, because a queue sheds
+ * whichever buffers it holds and the middle of a GOP is not a thing a destination can decode. */
 #define RESTREAM_QUEUE_BYTES 4194304
+/* Backlog at which the feed stops handing over access units, and the backlog it waits to fall
+ * back to before resuming. Both sit under the queue's own limit so that the queue never reaches
+ * it, and the gap between them keeps a feed that is barely keeping up from stopping and starting
+ * once per access unit. */
+#define RESTREAM_FEED_HIGH_BYTES (RESTREAM_QUEUE_BYTES / 2)
+#define RESTREAM_FEED_LOW_BYTES (RESTREAM_QUEUE_BYTES / 8)
 
 static void restream_cancel_retry(CustomData *data)
 {
@@ -579,13 +591,35 @@ static void restream_schedule_retry(CustomData *data)
     data->restream_backoff_ms = MIN(data->restream_backoff_ms * 2, RESTREAM_BACKOFF_CAP_MS);
 }
 
+/* Bytes the egress is holding but has not sent. Zero when there is no egress to ask. */
+static guint restream_backlog(CustomData *data)
+{
+    guint level = 0;
+
+    if (data->restream_queue != NULL) {
+        g_object_get(data->restream_queue, "current-level-bytes", &level, NULL);
+    }
+    return level;
+}
+
 /* Copy each access unit the tee is about to carry into the egress pipeline.
  *
  * Runs on the player's streaming thread, so what it must not do is block or report failure: the
  * push return is dropped on purpose. An egress that cannot keep up is the egress pipeline's own
  * problem, and this pad is the one carrying the picture. The probe is removed before the appsrc
  * it writes to is released, and gst_pad_remove_probe waits for a running callback to return, so
- * restream_src is valid for as long as this can run.
+ * restream_src and restream_queue are valid for as long as this can run.
+ *
+ * An uplink slower than the goggle's bitrate is what makes the dropping rule matter. Dropping is
+ * whole GOPs: the feed stops at the access unit that finds the backlog too high, which truncates
+ * a GOP the destination has already started and can simply end, and resumes at a key frame,
+ * which is the only point a destination can start decoding from. Letting the queue shed instead
+ * takes buffers out of the middle of a GOP and leaves the frames around them referring to
+ * pictures that never arrived.
+ *
+ * Nothing here reports: the flags it sets are read by the watchdog on the loop thread, because
+ * a log line from here would put a JNI upcall and a file append on the thread carrying the
+ * picture.
  */
 static GstPadProbeReturn restream_feed_cb(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
 {
@@ -596,13 +630,26 @@ static GstPadProbeReturn restream_feed_cb(GstPad *pad, GstPadProbeInfo *info, gp
         return GST_PAD_PROBE_OK;
     }
 
+    guint backlog = restream_backlog(data);
+
     /* Open on a key frame: the muxer needs the parameter sets that precede one, and a
-     * destination handed the middle of a GOP has nothing it can decode until the next. */
+     * destination handed the middle of a GOP has nothing it can decode until the next. The same
+     * gate carries the wait for a backlog to drain, since both end the same way. */
     if (g_atomic_int_get(&data->restream_needs_key)) {
-        if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT)) {
+        if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT) ||
+            backlog > RESTREAM_FEED_LOW_BYTES) {
+            if (g_atomic_int_get(&data->restream_congested)) {
+                g_atomic_int_inc(&data->restream_dropped);
+            }
             return GST_PAD_PROBE_OK;
         }
         g_atomic_int_set(&data->restream_needs_key, 0);
+        g_atomic_int_set(&data->restream_congested, 0);
+    } else if (backlog > RESTREAM_FEED_HIGH_BYTES) {
+        g_atomic_int_set(&data->restream_needs_key, 1);
+        g_atomic_int_set(&data->restream_congested, 1);
+        g_atomic_int_inc(&data->restream_dropped);
+        return GST_PAD_PROBE_OK;
     }
 
     gst_app_src_push_buffer(GST_APP_SRC(data->restream_src), gst_buffer_ref(buffer));
@@ -672,6 +719,11 @@ static void restream_stop(CustomData *data, gboolean retry)
 
     data->restream_src = NULL;
 
+    if (data->restream_queue != NULL) {
+        gst_object_unref(data->restream_queue);
+        data->restream_queue = NULL;
+    }
+
     if (data->restream_bus_source != NULL) {
         g_source_destroy(data->restream_bus_source);
         g_source_unref(data->restream_bus_source);
@@ -729,7 +781,23 @@ static gboolean restream_watchdog_cb(gpointer user_data)
 
     if (!data->restream_armed || data->restream_pipeline == NULL) {
         data->watch_last_sink = -1;
+        data->watch_reported_congested = 0;
         return G_SOURCE_CONTINUE;
+    }
+
+    /* The feed's backlog state, reported here rather than where it changes. Latched, so a slow
+     * uplink writes one line when the feed starts dropping and one when it recovers. */
+    gint congested = g_atomic_int_get(&data->restream_congested);
+    if (congested != data->watch_reported_congested) {
+        data->watch_reported_congested = congested;
+        if (congested) {
+            notify_log(data, "restream backlogged, dropping whole GOPs until it drains");
+        } else {
+            gchar *line = g_strdup_printf("restream feeding again, %d access units dropped",
+                                          g_atomic_int_get(&data->restream_dropped));
+            notify_log(data, line);
+            g_free(line);
+        }
     }
 
     gint sink = g_atomic_int_get(&data->restream_sink_count);
@@ -788,7 +856,7 @@ static gboolean restream_start(gpointer user_data)
                                              : "video/x-h265,stream-format=hvc1,alignment=au";
     gchar *desc = g_strdup_printf(
         "appsrc name=esrc is-live=true format=time do-timestamp=false max-bytes=%d block=false "
-        "! queue leaky=downstream max-size-buffers=0 max-size-time=0 max-size-bytes=%d "
+        "! queue name=equeue leaky=downstream max-size-buffers=0 max-size-time=0 max-size-bytes=%d "
         "! %s ! %s "
         "! flvmux name=mux streamable=true ! rtmp2sink name=rtmpsink sync=false "
         "audiotestsrc wave=silence is-live=true ! audioconvert ! audioresample "
@@ -815,13 +883,17 @@ static gboolean restream_start(gpointer user_data)
 
     GstElement *src = gst_bin_get_by_name(GST_BIN(pipeline), "esrc");
     GstElement *sink = gst_bin_get_by_name(GST_BIN(pipeline), "rtmpsink");
-    if (src == NULL || sink == NULL) {
-        notify_restream(data, "restream pipeline is missing its source or sink");
+    GstElement *queue = gst_bin_get_by_name(GST_BIN(pipeline), "equeue");
+    if (src == NULL || sink == NULL || queue == NULL) {
+        notify_restream(data, "restream pipeline is missing its source, queue or sink");
         if (src != NULL) {
             gst_object_unref(src);
         }
         if (sink != NULL) {
             gst_object_unref(sink);
+        }
+        if (queue != NULL) {
+            gst_object_unref(queue);
         }
         gst_object_unref(pipeline);
         gst_caps_unref(caps);
@@ -866,9 +938,12 @@ static gboolean restream_start(gpointer user_data)
 
     data->restream_pipeline = pipeline;
     data->restream_src = src;
+    data->restream_queue = queue;
     data->restream_feed_pad = feed_pad;
     data->restream_started_us = g_get_monotonic_time();
     g_atomic_int_set(&data->restream_needs_key, 1);
+    g_atomic_int_set(&data->restream_dropped, 0);
+    g_atomic_int_set(&data->restream_congested, 0);
 
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
     data->restream_feed_probe = gst_pad_add_probe(feed_pad, GST_PAD_PROBE_TYPE_BUFFER,

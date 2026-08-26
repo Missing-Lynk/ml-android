@@ -74,11 +74,24 @@ class RestreamService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        /*
+         * Explicit by package rather than by class, because the receiver is registered by the
+         * activity at runtime: the broadcast has to reach the machine, and the machine lives
+         * with the activity rather than here.
+         */
+        val stop = PendingIntent.getBroadcast(
+            this,
+            1,
+            Intent(ACTION_STOP).setPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_stream)
             .setContentTitle(getString(R.string.stream_notification_title))
             .setContentText(label ?: getString(R.string.stream_notification_text))
             .setContentIntent(open)
+            .addAction(R.drawable.ic_stream_stop, getString(R.string.stream_stop), stop)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -128,6 +141,9 @@ class RestreamService : Service() {
     }
 
     companion object {
+        /** the notification's Stop action; the activity listens for it */
+        const val ACTION_STOP = "at.websium.ml.STOP_RESTREAM"
+
         private const val CHANNEL_ID = "restream"
         private const val NOTIFICATION_ID = 1
         private const val WIFI_LOCK_TAG = "MissingLynk:restream"

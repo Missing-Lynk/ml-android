@@ -81,6 +81,10 @@ class RestreamMachine {
     val armedDestinationId: String?
         get() = armed?.id
 
+    /** what the broadcast is called on screen, null when nothing is armed */
+    val armedLabel: String?
+        get() = armed?.label
+
     /** the codec the SDP named, which decides whether a destination will take the stream */
     private var negotiatedCodec: String? = null
 
@@ -153,6 +157,22 @@ class RestreamMachine {
                 Effect.ArmEgress(target.url),
                 Effect.Log("stream", "re-armed ${target.label}"),
             ),
+        )
+    }
+
+    /**
+     * Stop was tapped in the keep-alive notification. Distinct from the toggle because it can
+     * arrive from a notification the system is still showing after a broadcast has already
+     * ended, and stopping twice has to mean nothing rather than arming.
+     */
+    fun onStopRequested(): Step {
+        if (!isArmed) {
+            return Step(state)
+        }
+
+        return disarm(
+            Effect.Log("stream", "stopped from the notification"),
+            Effect.Toast(R.string.stream_stopped),
         )
     }
 

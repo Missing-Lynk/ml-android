@@ -49,13 +49,25 @@ enum class Toggle(
 /**
  * The broadcast indicator. A reconnect is silent by design, so an armed restream that is not
  * carrying says so rather than showing the same thing as one that is.
+ *
+ * It names the destination, because several are saved and which one a session is going to is not
+ * otherwise visible from the video screen. The name rather than the URL: the URL ends in a stream
+ * key and this sits over the picture.
  */
-enum class Badge(
+data class Badge(
     @param:StringRes val textResource: Int,
     @param:DrawableRes val iconResource: Int,
+    val label: String,
 ) {
-    LIVE(R.string.stream_badge_live, R.drawable.ic_dot_live),
-    RECONNECTING(R.string.stream_badge_reconnecting, R.drawable.ic_dot_reconnecting),
+    companion object {
+        fun live(label: String): Badge {
+            return Badge(R.string.stream_badge_live, R.drawable.ic_dot_live, label)
+        }
+
+        fun reconnecting(label: String): Badge {
+            return Badge(R.string.stream_badge_reconnecting, R.drawable.ic_dot_reconnecting, label)
+        }
+    }
 }
 
 /**
@@ -100,10 +112,13 @@ fun screenFor(
     state: ConnectionMachine.State,
     failureReason: String? = null,
     restream: RestreamMachine.State = RestreamMachine.State.OFF,
+    restreamLabel: String? = null,
     areControlsRevealed: Boolean = false,
 ): Screen {
     val base = statusScreenFor(state, failureReason)
-    return base.copy(controls = controlsFor(base.chrome, restream, areControlsRevealed))
+    return base.copy(
+        controls = controlsFor(base.chrome, restream, restreamLabel, areControlsRevealed)
+    )
 }
 
 /**
@@ -113,6 +128,7 @@ fun screenFor(
 private fun controlsFor(
     chrome: Chrome,
     restream: RestreamMachine.State,
+    restreamLabel: String?,
     areControlsRevealed: Boolean,
 ): Controls {
     val isShowing = chrome == Chrome.IMMERSIVE && areControlsRevealed
@@ -123,10 +139,11 @@ private fun controlsFor(
             restream == RestreamMachine.State.OFF -> Toggle.START
             else -> Toggle.STOP
         },
-        badge = when (restream) {
-            RestreamMachine.State.OFF -> null
-            RestreamMachine.State.ARMED -> Badge.RECONNECTING
-            RestreamMachine.State.CARRYING -> Badge.LIVE
+        // the machine carries a name for as long as it is armed, so the two arrive together
+        badge = when {
+            restream == RestreamMachine.State.OFF || restreamLabel == null -> null
+            restream == RestreamMachine.State.CARRYING -> Badge.live(restreamLabel)
+            else -> Badge.reconnecting(restreamLabel)
         },
     )
 }

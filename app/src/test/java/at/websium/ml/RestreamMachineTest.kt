@@ -238,6 +238,15 @@ class RestreamMachineTest {
     }
 
     @Test
+    fun theBroadcastCarriesTheNameTheBadgeShows() {
+        assertNull(machine.armedLabel)
+        arm()
+        assertEquals("Twitch live", machine.armedLabel)
+        machine.onSessionLeft()
+        assertNull(machine.armedLabel)
+    }
+
+    @Test
     fun theBroadcastNamesTheRecordItWasArmedTo() {
         // the caller looks the destination up by this id, so a change of active entry cannot
         // move a broadcast already in flight
@@ -263,6 +272,31 @@ class RestreamMachineTest {
             ),
             step.effects,
         )
+    }
+
+    @Test
+    fun stopFromTheNotificationEndsTheBroadcast() {
+        arm()
+        machine.onEgressLive(true)
+        val step = machine.onStopRequested()
+
+        assertEquals(State.OFF, step.state)
+        assertEquals(
+            listOf(
+                Effect.Log("stream", "stopped from the notification"),
+                Effect.Toast(R.string.stream_stopped),
+                Effect.DisarmEgress,
+                Effect.StopKeepAlive,
+            ),
+            step.effects,
+        )
+    }
+
+    @Test
+    fun stopFromANotificationLeftOverAfterTheBroadcastEndedArmsNothing() {
+        val step = machine.onStopRequested()
+        assertEquals(State.OFF, step.state)
+        assertTrue(step.effects.isEmpty())
     }
 
     @Test

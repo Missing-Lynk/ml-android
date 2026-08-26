@@ -242,20 +242,43 @@ class ScreenTest {
     fun theBadgeSaysWhetherAnArmedBroadcastIsCarrying() {
         assertNull(screenFor(State.PLAYING, restream = RestreamMachine.State.OFF).controls.badge)
         assertEquals(
-            Badge.RECONNECTING,
-            screenFor(State.PLAYING, restream = RestreamMachine.State.ARMED).controls.badge,
+            Badge.reconnecting("Twitch live"),
+            screenFor(
+                State.PLAYING,
+                restream = RestreamMachine.State.ARMED,
+                restreamLabel = "Twitch live",
+            ).controls.badge,
         )
         assertEquals(
-            Badge.LIVE,
-            screenFor(State.PLAYING, restream = RestreamMachine.State.CARRYING).controls.badge,
+            Badge.live("Twitch live"),
+            screenFor(
+                State.PLAYING,
+                restream = RestreamMachine.State.CARRYING,
+                restreamLabel = "Twitch live",
+            ).controls.badge,
         )
+    }
+
+    @Test
+    fun theBadgeNamesTheDestinationBecauseSeveralAreSaved() {
+        // which destination a session is going to is not otherwise visible from the video screen
+        val badge = screenFor(
+            State.PLAYING,
+            restream = RestreamMachine.State.CARRYING,
+            restreamLabel = "Twitch Inspector",
+        ).controls.badge
+        assertEquals("Twitch Inspector", badge?.label)
     }
 
     @Test
     fun theBadgeStaysUpInEveryChromeBecauseTheFeedIsWhatGoesAway() {
         // the controls hide themselves; whether a session is being broadcast has to outlast them
         val lit = ConnectionMachine.State.entries.filter { state ->
-            screenFor(state, restream = RestreamMachine.State.ARMED).controls.badge != null
+            screenFor(
+                state,
+                restream = RestreamMachine.State.ARMED,
+                restreamLabel = "Twitch live",
+            ).controls.badge != null
         }.toSet()
         assertEquals(ConnectionMachine.State.entries.toSet(), lit)
     }

@@ -1,7 +1,10 @@
 package at.websium.ml
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -87,6 +90,16 @@ class MainActivity : AppCompatActivity() {
         render()
     }
 
+    /**
+     * Stop tapped in the keep-alive notification, which is the only way to end a broadcast
+     * without bringing the app to the front.
+     */
+    private val stopFromNotification = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            applyRestream(restream.onStopRequested())
+        }
+    }
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -117,6 +130,13 @@ class MainActivity : AppCompatActivity() {
         fullscreenBack.setOnClickListener { disconnect() }
         streamToggle.setOnClickListener { toggleStreaming() }
         onBackPressedDispatcher.addCallback(this, leaveSession)
+
+        ContextCompat.registerReceiver(
+            this,
+            stopFromNotification,
+            IntentFilter(RestreamService.ACTION_STOP),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
 
         // targetSdk 36 forces edge-to-edge; pad the content by the system-bar insets so the
         // toolbar sits below the status bar. When bars are hidden (playing) the insets are 0,
@@ -181,6 +201,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         ticker.removeCallbacks(tick)
+        unregisterReceiver(stopFromNotification)
         applyRestream(restream.onShutdown())
         teardownPlayer()
         link.shutdown()
@@ -364,7 +385,9 @@ class MainActivity : AppCompatActivity() {
         }
         loggedState = state
 
-        val next = screenFor(state, machine.failureReason, restream.state, areControlsRevealed)
+        val next = screenFor(
+            state, machine.failureReason, restream.state, restream.armedLabel, areControlsRevealed
+        )
         if (next.chrome != Chrome.IMMERSIVE) {
             // the controls belong to the immersive chrome, and their timer leaves with them
             ticker.removeCallbacks(hideControls)
@@ -417,7 +440,7 @@ class MainActivity : AppCompatActivity() {
         val badge = controls.badge
         streamBadge.visibility = visibilityOf(badge != null)
         if (badge != null) {
-            streamBadge.setText(badge.textResource)
+            streamBadge.text = getString(badge.textResource, badge.label)
             streamBadge.setCompoundDrawablesRelativeWithIntrinsicBounds(badge.iconResource, 0, 0, 0)
         }
 
