@@ -58,14 +58,31 @@ data class Badge(
     @param:StringRes val textResource: Int,
     @param:DrawableRes val iconResource: Int,
     val label: String,
+
+    /**
+     * What the audio track is carrying, on a second line. The system's own recording indicator
+     * says a microphone is open somewhere; this says it is this broadcast's, and says so for
+     * silence too, so the line reads the same either way and its absence is never the message.
+     */
+    @param:StringRes val audioResource: Int,
 ) {
     companion object {
-        fun live(label: String): Badge {
-            return Badge(R.string.stream_badge_live, R.drawable.ic_dot_live, label)
+        fun live(label: String, usingMicrophone: Boolean): Badge {
+            return Badge(R.string.stream_badge_live, R.drawable.ic_dot_live, label,
+                         audioResourceFor(usingMicrophone))
         }
 
-        fun reconnecting(label: String): Badge {
-            return Badge(R.string.stream_badge_reconnecting, R.drawable.ic_dot_reconnecting, label)
+        fun reconnecting(label: String, usingMicrophone: Boolean): Badge {
+            return Badge(R.string.stream_badge_reconnecting, R.drawable.ic_dot_reconnecting, label,
+                         audioResourceFor(usingMicrophone))
+        }
+
+        private fun audioResourceFor(usingMicrophone: Boolean): Int {
+            return if (usingMicrophone) {
+                R.string.stream_badge_audio_microphone
+            } else {
+                R.string.stream_badge_audio_silence
+            }
         }
     }
 }
@@ -90,6 +107,13 @@ data class Controls(
     val toggle: Toggle? = null,
     val badge: Badge? = null,
     val notice: Notice? = null,
+
+    /**
+     * What the goggle is sending, ready to draw. It rides with the revealed controls rather than
+     * showing always: it is what decides which destinations will take the stream, which is a
+     * thing checked before arming rather than watched while flying.
+     */
+    val codec: String? = null,
 )
 
 /**
@@ -109,6 +133,19 @@ data class Screen(
 )
 
 /**
+ * The SDP's spelling turned into the one people read. An unrecognised name is shown as it came,
+ * since a wrong label is worse than an unfamiliar one.
+ */
+private fun codecLabel(codec: String?): String? {
+    return when {
+        codec == null -> null
+        codec.equals("H264", ignoreCase = true) -> "H.264"
+        codec.equals("H265", ignoreCase = true) -> "H.265"
+        else -> codec
+    }
+}
+
+/**
  * The one place that says what each state looks like.
  *
  * [failureReason] is the player's last complaint, which the states that are mid-attempt show
@@ -120,11 +157,16 @@ fun screenFor(
     failureReason: String? = null,
     restream: RestreamMachine.State = RestreamMachine.State.OFF,
     restreamLabel: String? = null,
+    streamCodec: String? = null,
+    isUsingMicrophone: Boolean = false,
     areControlsRevealed: Boolean = false,
 ): Screen {
     val base = statusScreenFor(state, failureReason)
     return base.copy(
-        controls = controlsFor(base.chrome, state, restream, restreamLabel, areControlsRevealed)
+        controls = controlsFor(
+            base.chrome, state, restream, restreamLabel, streamCodec, isUsingMicrophone,
+            areControlsRevealed
+        )
     )
 }
 
@@ -137,10 +179,13 @@ private fun controlsFor(
     state: ConnectionMachine.State,
     restream: RestreamMachine.State,
     restreamLabel: String?,
+    streamCodec: String?,
+    isUsingMicrophone: Boolean,
     areControlsRevealed: Boolean,
 ): Controls {
     val isShowing = chrome == Chrome.IMMERSIVE && areControlsRevealed
     return Controls(
+        codec = if (isShowing) codecLabel(streamCodec) else null,
         notice = if (state == ConnectionMachine.State.FEED_LOST) {
             Notice(R.string.notice_feed_lost)
         } else {
@@ -155,8 +200,9 @@ private fun controlsFor(
         // the machine carries a name for as long as it is armed, so the two arrive together
         badge = when {
             restream == RestreamMachine.State.OFF || restreamLabel == null -> null
-            restream == RestreamMachine.State.CARRYING -> Badge.live(restreamLabel)
-            else -> Badge.reconnecting(restreamLabel)
+            restream == RestreamMachine.State.CARRYING ->
+                Badge.live(restreamLabel, isUsingMicrophone)
+            else -> Badge.reconnecting(restreamLabel, isUsingMicrophone)
         },
     )
 }

@@ -212,6 +212,25 @@ class RestreamMachineTest {
         )
     }
 
+    @Test
+    fun theAudioSourceComesFromThePlayerRatherThanTheSetting() {
+        // a microphone that will not open falls back to silence, and the badge has to follow
+        arm()
+        machine.onAudioSource(usingMicrophone = true)
+        assertTrue(machine.isUsingMicrophone)
+
+        machine.onAudioSource(usingMicrophone = false)
+        assertFalse(machine.isUsingMicrophone)
+    }
+
+    @Test
+    fun disarmingForgetsTheAudioSource() {
+        arm()
+        machine.onAudioSource(usingMicrophone = true)
+        machine.onToggleTapped(destination)
+        assertFalse(machine.isUsingMicrophone)
+    }
+
     // the player underneath
 
     @Test

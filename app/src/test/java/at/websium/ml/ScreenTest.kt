@@ -194,6 +194,55 @@ class ScreenTest {
     }
 
     @Test
+    fun theBadgeNamesTheAudioSourceItIsActuallyCarrying() {
+        val silent = screenFor(
+            State.PLAYING, restream = RestreamMachine.State.CARRYING, restreamLabel = "Twitch",
+        ).controls.badge
+        assertEquals(R.string.stream_badge_audio_silence, silent?.audioResource)
+
+        val mic = screenFor(
+            State.PLAYING, restream = RestreamMachine.State.CARRYING, restreamLabel = "Twitch",
+            isUsingMicrophone = true,
+        ).controls.badge
+        assertEquals(R.string.stream_badge_audio_microphone, mic?.audioResource)
+    }
+
+    @Test
+    fun aReconnectingBadgeNamesItsAudioTheSameWay() {
+        val badge = screenFor(
+            State.PLAYING, restream = RestreamMachine.State.ARMED, restreamLabel = "Twitch",
+            isUsingMicrophone = true,
+        ).controls.badge
+        assertEquals(R.string.stream_badge_audio_microphone, badge?.audioResource)
+    }
+
+    @Test
+    fun theCodecShowsWithTheControlsAndNotBefore() {
+        assertNull(screenFor(State.PLAYING, streamCodec = "H265").controls.codec)
+        assertEquals(
+            "H.265",
+            screenFor(State.PLAYING, streamCodec = "H265", areControlsRevealed = true).controls.codec
+        )
+    }
+
+    @Test
+    fun theCodecIsSpeltTheWayPeopleReadIt() {
+        val h264 = screenFor(State.PLAYING, streamCodec = "H264", areControlsRevealed = true)
+        assertEquals("H.264", h264.controls.codec)
+    }
+
+    @Test
+    fun anUnrecognisedCodecIsShownAsItCame() {
+        val screen = screenFor(State.PLAYING, streamCodec = "AV1", areControlsRevealed = true)
+        assertEquals("AV1", screen.controls.codec)
+    }
+
+    @Test
+    fun aSessionThatHasNotNegotiatedYetShowsNoCodec() {
+        assertNull(screenFor(State.PLAYING, areControlsRevealed = true).controls.codec)
+    }
+
+    @Test
     fun onlyALostFeedCarriesANotice() {
         val noticed = State.entries.filter { state -> screenFor(state).controls.notice != null }
         assertEquals(listOf(State.FEED_LOST), noticed)
@@ -259,7 +308,7 @@ class ScreenTest {
     fun theBadgeSaysWhetherAnArmedBroadcastIsCarrying() {
         assertNull(screenFor(State.PLAYING, restream = RestreamMachine.State.OFF).controls.badge)
         assertEquals(
-            Badge.reconnecting("Twitch live"),
+            Badge.reconnecting("Twitch live", usingMicrophone = false),
             screenFor(
                 State.PLAYING,
                 restream = RestreamMachine.State.ARMED,
@@ -267,7 +316,7 @@ class ScreenTest {
             ).controls.badge,
         )
         assertEquals(
-            Badge.live("Twitch live"),
+            Badge.live("Twitch live", usingMicrophone = false),
             screenFor(
                 State.PLAYING,
                 restream = RestreamMachine.State.CARRYING,

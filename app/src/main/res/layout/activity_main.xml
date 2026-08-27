@@ -91,15 +91,18 @@
 
         <!-- Stays on screen for as long as the restream is armed, unlike the controls, which
              hide themselves: whether a session is being broadcast has to be readable at a
-             glance, without touching the display and covering the picture. -->
+             glance, without touching the display and covering the picture.
+
+             Bottom-left because Android draws its own microphone and camera indicator in the
+             top-right corner, and this is the one overlay that is always up. -->
         <TextView
             android:id="@+id/stream_badge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="top|end"
+            android:layout_gravity="bottom|start"
             android:layout_margin="16dp"
             android:maxWidth="220dp"
-            android:maxLines="1"
+            android:maxLines="2"
             android:ellipsize="end"
             android:background="@drawable/bg_scrim_pill"
             android:drawablePadding="8dp"
@@ -110,6 +113,25 @@
             android:visibility="gone"
             app:drawableStartCompat="@drawable/ic_dot_live"
             tools:text="Streaming"
+            tools:visibility="visible" />
+
+        <!-- What the goggle is sending. Revealed with the controls, because it is what says
+             whether a destination will take the stream, and Twitch and Kick take H.264 only.
+             It takes the top-right corner, where a chip that only appears on a tap can share
+             the space with the system's own indicator. -->
+        <TextView
+            android:id="@+id/stream_codec"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="16dp"
+            android:background="@drawable/bg_scrim_pill"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="@android:color/white"
+            android:visibility="gone"
+            tools:text="H.265"
             tools:visibility="visible" />
 
         <!-- Sits over a picture the decoder is holding because the feed stopped while the

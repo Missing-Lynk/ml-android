@@ -24,6 +24,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     override var onCodec: ((String) -> Unit)? = null
 
     override var onRestreamFailed: ((String) -> Unit)? = null
+    override var onAudioSource: ((Boolean) -> Unit)? = null
 
     override var onRestreamLive: ((Boolean) -> Unit)? = null
 
@@ -104,6 +105,13 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
      */
     private fun onNativeRestreamLive(live: Boolean) {
         onRestreamLive?.invoke(live)
+    }
+
+    /**
+     * Invoked from the native GStreamer thread when the egress settles on an audio source.
+     */
+    private fun onNativeAudioSource(usingMicrophone: Boolean) {
+        onAudioSource?.invoke(usingMicrophone)
     }
 
     /**

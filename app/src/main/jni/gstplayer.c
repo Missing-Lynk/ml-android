@@ -117,6 +117,7 @@ static jmethodID on_log_method_id;
 static jmethodID on_codec_method_id;
 static jmethodID on_restream_method_id;
 static jmethodID on_restream_live_method_id;
+static jmethodID on_audio_method_id;
 
 /* JNI thread plumbing */
 static JNIEnv *attach_current_thread(void)
@@ -185,6 +186,22 @@ static void notify_codec(CustomData *data, const char *codec)
     jstring s = (*env)->NewStringUTF(env, codec);
     (*env)->CallVoidMethod(env, data->app, on_codec_method_id, s);
     (*env)->DeleteLocalRef(env, s);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+}
+
+/* Report what the egress's audio track is actually carrying. The app shows the setting on the
+ * broadcast badge, and a microphone that would not open latches this to silence: a badge naming a
+ * source that is not being captured is worse than one naming none. */
+static void notify_audio(CustomData *data, gboolean using_mic)
+{
+    JNIEnv *env = get_jni_env();
+    if (data->app == NULL || on_audio_method_id == NULL) {
+        return;
+    }
+
+    (*env)->CallVoidMethod(env, data->app, on_audio_method_id, (jboolean) using_mic);
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
     }
@@ -832,6 +849,7 @@ static void restream_error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
         g_strcmp0(GST_OBJECT_NAME(msg->src), "micsrc") == 0) {
         data->restream_mic_failed = TRUE;
         notify_log(data, "microphone would not open, carrying silence instead");
+        notify_audio(data, FALSE);
     } else if (!data->restream_reported_down) {
         /* One toast per outage, not one per retry: the latch is still clear on the failure that
          * begins an outage and set for every attempt after it. */
@@ -990,6 +1008,53 @@ static gboolean restream_watchdog_cb(gpointer user_data)
     return G_SOURCE_CONTINUE;
 }
 
+/* Declare the muxer's video pad as an Enhanced FLV track, which is what admits H.265.
+ *
+ * `eflvmux` keeps the mode per pad, and its default is `legacy`: a legacy track refuses H.265
+ * whatever the pad template advertises ("pad's track type is set to legacy, H265 is only possible
+ * with multitrack or non-multitrack types"). `non-multitrack` is plain Enhanced RTMP with no
+ * track IDs, which is the shape YouTube and self-hosted servers accept.
+ *
+ * The audio pad is left alone. An enhanced video track beside a legacy AAC track is the pairing
+ * enhanced RTMP defines for HEVC, and `voaacenc` output is what legacy FLV already carries.
+ *
+ * Runs before the pipeline leaves NULL, so the mode is set well ahead of any caps negotiation.
+ */
+static void restream_mark_enhanced_track(GstElement *pipeline)
+{
+    GstElement *mux = gst_bin_get_by_name(GST_BIN(pipeline), "mux");
+    if (mux == NULL) {
+        return;
+    }
+
+    GstIterator *pads = gst_element_iterate_sink_pads(mux);
+    GValue item = G_VALUE_INIT;
+    gboolean done = FALSE;
+    while (!done) {
+        switch (gst_iterator_next(pads, &item)) {
+        case GST_ITERATOR_OK: {
+            GstPad *pad = GST_PAD(g_value_get_object(&item));
+            gchar *name = gst_pad_get_name(pad);
+            if (g_str_has_prefix(name, "video")) {
+                gst_util_set_object_arg(G_OBJECT(pad), "flv-track-mode", "non-multitrack");
+            }
+            g_free(name);
+            g_value_reset(&item);
+            break;
+        }
+        case GST_ITERATOR_RESYNC:
+            gst_iterator_resync(pads);
+            break;
+        default:
+            done = TRUE;
+            break;
+        }
+    }
+    g_value_unset(&item);
+    gst_iterator_free(pads);
+    gst_object_unref(mux);
+}
+
 /* Build the egress pipeline and start feeding it from the player's tee. Runs on the loop thread.
  *
  * The queue heads it so a stalled uplink drops access units rather than accumulating them, and
@@ -1049,11 +1114,19 @@ static gboolean restream_start(gpointer user_data)
     const gchar *media = data->codec_is_h264 ? "video/x-h264,stream-format=avc,alignment=au"
                                              : "video/x-h265,stream-format=hvc1,alignment=au";
 
+    /* The muxer follows the codec. `flvmux` takes `video/x-h264, stream-format=avc` and nothing
+     * else in this build, so an H.265 stream cannot be linked to it at all; `eflvmux`, the
+     * Enhanced FLV muxer in the same plugin, is the one whose template carries
+     * `video/x-h265, stream-format=hvc1`. H.264 stays on `flvmux`, because legacy FLV is what
+     * Twitch expects for AVC and that path is proven against its ingest. */
+    const gchar *muxer = data->codec_is_h264 ? "flvmux" : "eflvmux";
+
     /* The track exists either way: an ingest handed video alone behaves badly, and audio that
      * keeps flowing through an RF dropout is what holds the session open across a battery swap.
      * The source is named so that an error from it can be told apart from one raised by the
      * sink, which is a wrong stream key rather than a microphone that will not open. */
     gboolean use_mic = data->restream_use_mic && !data->restream_mic_failed;
+    notify_audio(data, use_mic);
     const gchar *audio = use_mic
         ? "openslessrc name=micsrc ! audioconvert ! audioresample"
         : "audiotestsrc name=micsrc wave=silence is-live=true ! audioconvert ! audioresample";
@@ -1062,9 +1135,9 @@ static gboolean restream_start(gpointer user_data)
         "appsrc name=esrc is-live=true format=time do-timestamp=false max-bytes=%d block=false "
         "! queue name=equeue leaky=downstream max-size-buffers=0 max-size-time=0 max-size-bytes=%d "
         "! %s ! %s "
-        "! flvmux name=mux streamable=true ! rtmp2sink name=rtmpsink sync=false "
+        "! %s name=mux streamable=true ! rtmp2sink name=rtmpsink sync=false "
         "%s ! voaacenc bitrate=128000 ! mux.",
-        RESTREAM_QUEUE_BYTES, RESTREAM_QUEUE_BYTES, parse, media, audio);
+        RESTREAM_QUEUE_BYTES, RESTREAM_QUEUE_BYTES, parse, media, muxer, audio);
 
     GError *error = NULL;
     GstElement *pipeline = gst_parse_launch(desc, &error);
@@ -1082,6 +1155,10 @@ static gboolean restream_start(gpointer user_data)
         gst_object_unref(feed_pad);
         restream_schedule_retry(data);
         return G_SOURCE_REMOVE;
+    }
+
+    if (!data->codec_is_h264) {
+        restream_mark_enhanced_track(pipeline);
     }
 
     GstElement *src = gst_bin_get_by_name(GST_BIN(pipeline), "esrc");
@@ -1417,11 +1494,13 @@ static jboolean gst_native_class_init(JNIEnv *env, jclass klass)
         (*env)->GetMethodID(env, klass, "onNativeRestreamFailed", "(Ljava/lang/String;)V");
     on_restream_live_method_id =
         (*env)->GetMethodID(env, klass, "onNativeRestreamLive", "(Z)V");
+    on_audio_method_id = (*env)->GetMethodID(env, klass, "onNativeAudioSource", "(Z)V");
     if (custom_data_field_id == NULL || on_state_method_id == NULL || on_log_method_id == NULL ||
         on_codec_method_id == NULL || on_restream_method_id == NULL ||
-        on_restream_live_method_id == NULL) {
+        on_restream_live_method_id == NULL || on_audio_method_id == NULL) {
         LOGE("GStreamerPlayer is missing nativeCustomData / onNativeState / onNativeLog / "
-             "onNativeCodec / onNativeRestreamFailed / onNativeRestreamLive");
+             "onNativeCodec / onNativeRestreamFailed / onNativeRestreamLive / "
+             "onNativeAudioSource");
         return JNI_FALSE;
     }
 

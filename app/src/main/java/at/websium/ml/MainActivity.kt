@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var streamToggle: ImageButton
     private lateinit var streamBadge: TextView
     private lateinit var feedNotice: TextView
+    private lateinit var streamCodec: TextView
 
     private var player: StreamPlayer? = null
     private var lastPlayerFailure: String? = null
@@ -124,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         streamToggle = findViewById(R.id.stream_toggle)
         streamBadge = findViewById(R.id.stream_badge)
         feedNotice = findViewById(R.id.feed_notice)
+        streamCodec = findViewById(R.id.stream_codec)
 
         setSupportActionBar(toolbar)
 
@@ -354,6 +356,9 @@ class MainActivity : AppCompatActivity() {
             created.onRestreamLive = { live ->
                 runOnUiThread { applyRestream(restream.onEgressLive(live)) }
             }
+            created.onAudioSource = { usingMicrophone ->
+                runOnUiThread { applyRestream(restream.onAudioSource(usingMicrophone)) }
+            }
             player = created
             created
         } catch (failure: Throwable) {
@@ -388,7 +393,8 @@ class MainActivity : AppCompatActivity() {
         loggedState = state
 
         val next = screenFor(
-            state, machine.failureReason, restream.state, restream.armedLabel, areControlsRevealed
+            state, machine.failureReason, restream.state, restream.armedLabel,
+            restream.streamCodec, restream.isUsingMicrophone, areControlsRevealed
         )
         if (next.chrome != Chrome.IMMERSIVE) {
             // the controls belong to the immersive chrome, and their timer leaves with them
@@ -442,7 +448,8 @@ class MainActivity : AppCompatActivity() {
         val badge = controls.badge
         streamBadge.visibility = visibilityOf(badge != null)
         if (badge != null) {
-            streamBadge.text = getString(badge.textResource, badge.label)
+            streamBadge.text = getString(badge.textResource, badge.label) + "\n" +
+                getString(badge.audioResource)
             streamBadge.setCompoundDrawablesRelativeWithIntrinsicBounds(badge.iconResource, 0, 0, 0)
         }
 
@@ -450,6 +457,12 @@ class MainActivity : AppCompatActivity() {
         feedNotice.visibility = visibilityOf(notice != null)
         if (notice != null) {
             feedNotice.text = getString(notice.textResource)
+        }
+
+        val codec = controls.codec
+        streamCodec.visibility = visibilityOf(codec != null)
+        if (codec != null) {
+            streamCodec.text = codec
         }
 
         /*

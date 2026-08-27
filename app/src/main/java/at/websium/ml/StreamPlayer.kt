@@ -55,6 +55,12 @@ interface StreamPlayer {
     var onRestreamFailed: ((String) -> Unit)?
 
     /**
+     * What the egress's audio track is carrying, true for the microphone. Reported when a
+     * broadcast is armed and again if the microphone would not open, which falls back to silence.
+     */
+    var onAudioSource: ((Boolean) -> Unit)?
+
+    /**
      * Whether the restream is carrying to its destination. False while it is between attempts,
      * which the automatic reconnect makes otherwise invisible. Delivered on a player thread.
      */

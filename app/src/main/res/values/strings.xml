@@ -76,6 +76,8 @@
     <string name="stream_stopped">Streaming stopped</string>
     <string name="stream_badge_live">Streaming to %1$s</string>
     <string name="stream_badge_reconnecting">Reconnecting to %1$s</string>
+    <string name="stream_badge_audio_silence">Audio: Silence</string>
+    <string name="stream_badge_audio_microphone">Audio: Microphone</string>
     <string name="stream_notification_channel">Streaming</string>
     <string name="stream_notification_title">Streaming</string>
     <string name="stream_notification_text">Broadcast is running</string>

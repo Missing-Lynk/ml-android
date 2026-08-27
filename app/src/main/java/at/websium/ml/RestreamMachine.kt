@@ -86,6 +86,18 @@ class RestreamMachine {
     private var negotiatedCodec: String? = null
 
     /**
+     * Whether the egress is carrying the microphone. Reported by the player rather than read from
+     * the setting, because a microphone that will not open falls back to silence and the badge
+     * has to name what is being sent rather than what was asked for.
+     */
+    var isUsingMicrophone: Boolean = false
+        private set
+
+    /** what the goggle is sending, "H264" or "H265", null until a session has negotiated one */
+    val streamCodec: String?
+        get() = negotiatedCodec
+
+    /**
      * The user tapped the toggle. [selected] is the active destination, or null when none is
      * saved. Its URL is judged here rather than by the caller.
      */
@@ -203,6 +215,14 @@ class RestreamMachine {
     }
 
     /**
+     * The egress settled on an audio source.
+     */
+    fun onAudioSource(usingMicrophone: Boolean): Step {
+        isUsingMicrophone = usingMicrophone
+        return Step(state)
+    }
+
+    /**
      * The SDP named the codec, "H264" or "H265".
      */
     fun onCodecNegotiated(codec: String): Step {
@@ -270,6 +290,7 @@ class RestreamMachine {
 
     private fun disarm(vararg leadingEffects: Effect): Step {
         armed = null
+        isUsingMicrophone = false
         state = State.OFF
         return Step(
             state,
