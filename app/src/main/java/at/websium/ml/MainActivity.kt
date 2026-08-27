@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fullscreenBack: ImageButton
     private lateinit var streamToggle: ImageButton
     private lateinit var streamBadge: TextView
+    private lateinit var feedNotice: TextView
 
     private var player: StreamPlayer? = null
     private var lastPlayerFailure: String? = null
@@ -122,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         fullscreenBack = findViewById(R.id.fullscreen_back)
         streamToggle = findViewById(R.id.stream_toggle)
         streamBadge = findViewById(R.id.stream_badge)
+        feedNotice = findViewById(R.id.feed_notice)
 
         setSupportActionBar(toolbar)
 
@@ -444,7 +446,17 @@ class MainActivity : AppCompatActivity() {
             streamBadge.setCompoundDrawablesRelativeWithIntrinsicBounds(badge.iconResource, 0, 0, 0)
         }
 
-        // show the video only while actually playing, so no frozen last frame leaks through
+        val notice = controls.notice
+        feedNotice.visibility = visibilityOf(notice != null)
+        if (notice != null) {
+            feedNotice.text = getString(notice.textResource)
+        }
+
+        /*
+         * The video shows whenever no status panel covers it, which includes FEED_LOST: the frame
+         * the decoder is holding is what the notice above is drawn over. A panel state has no
+         * picture worth showing behind it.
+         */
         player?.setVideoVisible(status == null)
 
         requestedOrientation = when {

@@ -71,6 +71,12 @@ data class Badge(
 }
 
 /**
+ * A chip over a picture that is being held rather than played. Distinct from [Badge], which says
+ * where the session is going: this says what the picture itself is doing.
+ */
+data class Notice(@param:StringRes val textResource: Int)
+
+/**
  * The controls drawn over the video.
  *
  * The back control and the toggle are revealed by a tap and hide themselves again; the badge is
@@ -83,6 +89,7 @@ data class Controls(
     val isBackVisible: Boolean = false,
     val toggle: Toggle? = null,
     val badge: Badge? = null,
+    val notice: Notice? = null,
 )
 
 /**
@@ -117,7 +124,7 @@ fun screenFor(
 ): Screen {
     val base = statusScreenFor(state, failureReason)
     return base.copy(
-        controls = controlsFor(base.chrome, restream, restreamLabel, areControlsRevealed)
+        controls = controlsFor(base.chrome, state, restream, restreamLabel, areControlsRevealed)
     )
 }
 
@@ -127,12 +134,18 @@ fun screenFor(
  */
 private fun controlsFor(
     chrome: Chrome,
+    state: ConnectionMachine.State,
     restream: RestreamMachine.State,
     restreamLabel: String?,
     areControlsRevealed: Boolean,
 ): Controls {
     val isShowing = chrome == Chrome.IMMERSIVE && areControlsRevealed
     return Controls(
+        notice = if (state == ConnectionMachine.State.FEED_LOST) {
+            Notice(R.string.notice_feed_lost)
+        } else {
+            null
+        },
         isBackVisible = isShowing,
         toggle = when {
             !isShowing -> null
@@ -202,6 +215,17 @@ private fun statusScreenFor(state: ConnectionMachine.State, failureReason: Strin
         )
 
         ConnectionMachine.State.PLAYING -> Screen(
+            chrome = Chrome.IMMERSIVE,
+            status = null,
+            isInSession = true,
+        )
+
+        /*
+         * No status panel: the panel replaces the video, and the whole point of this state is
+         * that the decoder is still holding the last picture and the session is intact. The
+         * notice in controlsFor says so over it.
+         */
+        ConnectionMachine.State.FEED_LOST -> Screen(
             chrome = Chrome.IMMERSIVE,
             status = null,
             isInSession = true,

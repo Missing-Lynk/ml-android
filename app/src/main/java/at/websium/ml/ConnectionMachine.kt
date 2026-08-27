@@ -20,6 +20,14 @@ class ConnectionMachine {
         SEARCHING, STREAM_DOWN, READY, CONNECTING, NO_AIR_UNIT, PLAYING, RECONNECTING,
 
         /**
+         * The feed stopped while the RTSP session stayed open, which is what a battery swap
+         * looks like: the goggle is still serving, the air unit is not sending. The player and
+         * its pipeline are kept, so the decoder holds the last picture and the feed resumes
+         * without a rebuild.
+         */
+        FEED_LOST,
+
+        /**
          * The player could not be built on this device. Terminal for the process: a native
          * library that failed to load will not load on a later attempt.
          */
@@ -94,7 +102,17 @@ class ConnectionMachine {
     private var lastStartStreamMs = 0L
     private var lastSessionProbeMs = 0L
 
+    /** the last answer a session probe gave, which separates a lost feed from a lost goggle */
+    private var isPortOpen = true
+
+    /** the last tick's broadcast state, so a probe answer knows whether a player may be released */
+    private var isRestreaming = false
+
+    /** when the feed was lost, for the bound on waiting it out */
+    private var feedLostAtMs = 0L
+
     fun onTick(tick: Tick): Step {
+        isRestreaming = tick.isRestreaming
         if (state == State.UNAVAILABLE) {
             return Step(state)
         }
@@ -106,7 +124,7 @@ class ConnectionMachine {
             }
 
             state = State.SEARCHING
-            return Step(state, listOf(Effect.TeardownPlayer))
+            return Step(state, releasePlayer())
         }
 
         return when (state) {
@@ -115,6 +133,7 @@ class ConnectionMachine {
             State.READY -> Step(state)
             State.CONNECTING, State.NO_AIR_UNIT, State.RECONNECTING -> stepConnecting(tick)
             State.PLAYING -> stepPlaying(tick)
+            State.FEED_LOST -> stepFeedLost(tick)
             // returned above, before the network check
             State.UNAVAILABLE -> Step(state)
         }
@@ -147,18 +166,32 @@ class ConnectionMachine {
      * so media may have started flowing in the meantime.
      */
     fun onSessionProbeResult(portOpen: Boolean, frameCount: Int, nowMs: Long): Step {
-        if (portOpen || state !in SESSION_STATES || frameCount > 0) {
+        isPortOpen = portOpen
+        if (portOpen || state !in SESSION_STATES) {
+            return Step(state)
+        }
+
+        /*
+         * A frame count carries the answer only while a session is still trying to get its
+         * first: FEED_LOST is reached with frames already counted, and they say nothing about
+         * whether the server is still there.
+         */
+        if (frameCount > 0 && state != State.FEED_LOST) {
             return Step(state)
         }
 
         state = State.STREAM_DOWN
-        return Step(
-            state,
-            listOf(
-                Effect.Log("conn", "RTSP port closed, waiting for the stream"),
-                Effect.TeardownPlayer,
-            )
-        )
+        return Step(state, listOf(Effect.Log("conn", "RTSP port closed, waiting for the stream")) +
+            releasePlayer())
+    }
+
+    /**
+     * Releasing the player takes the egress pipeline with it, because the egress runs on the
+     * player's own loop. A broadcast therefore keeps its player: the picture is gone either way,
+     * and what is being held open is the RTMP session and the audio track carrying it.
+     */
+    private fun releasePlayer(): List<Effect> {
+        return if (isRestreaming) emptyList() else listOf(Effect.TeardownPlayer)
     }
 
     fun onConnectTapped(nowMs: Long): Step {
@@ -271,9 +304,30 @@ class ConnectionMachine {
             return Step(state)
         }
 
+        /*
+         * Two thresholds, because the two outcomes cost different things. Saying the feed has
+         * stopped is cosmetic and undone by the next frame, so it is said as soon as the picture
+         * is visibly frozen; rebuilding throws a session away and keeps the higher bar the RF
+         * link's routine blips were the reason for.
+         */
         val watchesStalls = tick.foreground || tick.isRestreaming
-        if (!watchesStalls || tick.nowMs - lastFrameAtMs <= STALL_MS) {
+        val quietMs = tick.nowMs - lastFrameAtMs
+        if (!watchesStalls || quietMs <= (if (isPortOpen) FEED_QUIET_MS else STALL_MS)) {
             return Step(state)
+        }
+
+        /*
+         * A session whose port is still open has not gone anywhere; only the pictures stopped.
+         * Rebuilding would throw away a working RTSP session and the decoder's last frame with
+         * it, and gains nothing, because there is nothing to reconnect to.
+         */
+        if (isPortOpen) {
+            state = State.FEED_LOST
+            feedLostAtMs = tick.nowMs
+            return Step(
+                state,
+                listOf(Effect.Log("play", "feed stopped after $frames frames; session still open"))
+            )
         }
 
         state = State.RECONNECTING
@@ -286,11 +340,47 @@ class ConnectionMachine {
         )
     }
 
+    /**
+     * Feed lost: hold the picture and wait, re-checking that the session is still there.
+     *
+     * Returning to PLAYING costs no rebuild, which is the point: a battery swap resumes at the
+     * goggle's next IRAP. The bound exists because a session can answer on the port and be dead
+     * in every way that matters, and a rebuild is the only thing that recovers that.
+     */
+    private fun stepFeedLost(tick: Tick): Step {
+        val frames = tick.frameCount
+        if (frames == null) {
+            return Step(state)
+        }
+
+        if (frames != lastFrameCount) {
+            resetFrameTracking(frames, tick.nowMs)
+            state = State.PLAYING
+            return Step(state, listOf(Effect.Log("play", "feed resumed")))
+        }
+
+        val effects = mutableListOf<Effect>()
+        if (tick.nowMs - lastSessionProbeMs >= SESSION_PROBE_MS) {
+            lastSessionProbeMs = tick.nowMs
+            effects += Effect.SessionProbe
+        }
+
+        if (tick.nowMs - feedLostAtMs >= FEED_LOST_MS) {
+            state = State.RECONNECTING
+            effects += Effect.Log("play", "feed gone for ${FEED_LOST_MS}ms -> reconnecting")
+            effects += startStream(tick.nowMs)
+        }
+
+        return Step(state, effects)
+    }
+
     private fun connect(nowMs: Long, vararg leadingEffects: Effect): Step {
         userDisconnected = false
         failureReason = null
         sessionStartMs = nowMs
         lastSessionProbeMs = nowMs
+        // a session is only ever entered from a probe that answered
+        isPortOpen = true
         state = State.CONNECTING
         return Step(
             state,
@@ -317,7 +407,8 @@ class ConnectionMachine {
          * States with a live player behind them.
          */
         val SESSION_STATES =
-            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING)
+            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING,
+                  State.FEED_LOST)
 
         /** CONNECTING with no frames for this long blames the air unit */
         const val NO_VIDEO_MS = 7000L
@@ -337,7 +428,21 @@ class ConnectionMachine {
          */
         const val STALL_MS = 8000L
 
+        /**
+         * PLAYING with no new frames for this long, while the session is still answering, says
+         * so on screen. Low because nothing is torn down: the picture is already frozen by the
+         * time it shows, and the next frame clears it.
+         */
+        const val FEED_QUIET_MS = 2000L
+
         /** how often a session with no media re-checks that the RTSP port is still open */
         const val SESSION_PROBE_MS = 5000L
+
+        /**
+         * Longest a lost feed is waited out before the session is rebuilt anyway. Past the 40 s
+         * worst case of a battery swap, which is the gap this state exists to hold the picture
+         * through.
+         */
+        const val FEED_LOST_MS = 60000L
     }
 }

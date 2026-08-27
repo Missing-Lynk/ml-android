@@ -41,6 +41,9 @@ MOUNT_STREAM: str = "/venc8/stream"
 MOUNT_H264: str = "/venc8/h264"
 MOUNT_H265: str = "/venc8/h265"
 VALVE_NAME: str = "dropvalve"
+# How old a cached key frame may be and still open a client on. One GOP at the lowest frame rate
+# the tool serves, which is the longest a client legitimately waits for the next one.
+GOP_STALE_NS: int = 3 * 1000 * 1000 * 1000
 APPSINK_NAME: str = "encoded"
 APPSRC_NAME: str = "feed"
 DEFAULT_PORT: int = 554
@@ -257,7 +260,16 @@ class Encoder:
             if not is_key:
                 with self.lock:
                     opening = self.last_key_sample
-                if opening is None:
+                # A cached key frame older than a GOP predates a rehearsed dropout, and opening
+                # on it would set this client's timeline back to before the gap: its first
+                # access unit would arrive at zero and its second a gap-length into the future,
+                # which a receiver's jitter buffer holds rather than plays. Waiting costs at
+                # most one GOP, which is what a client joining a live feed pays anyway.
+                if opening is None or (
+                    buffer.pts != self.gst.CLOCK_TIME_NONE
+                    and opening.get_buffer().pts != self.gst.CLOCK_TIME_NONE
+                    and buffer.pts - opening.get_buffer().pts > GOP_STALE_NS
+                ):
                     return True
                 client.base_pts = opening.get_buffer().pts
                 client.is_feeding = True

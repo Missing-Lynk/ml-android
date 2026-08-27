@@ -77,6 +77,14 @@ typedef struct _CustomData
     gint64 restream_started_us; /* when the egress was started, for the backoff reset */
     gboolean restream_reported_down; /* the outage has been logged; cleared once it carries */
     gint restream_sink_count;  /* buffers the egress sink has accepted (g_atomic) */
+    GMutex restream_feed_lock; /* guards the four fields below, written from two threads */
+    GstBuffer *restream_last_key; /* the newest key access unit, re-sent to hold a gap open */
+    GstClockTime restream_out_pts; /* PTS of the last access unit handed to the appsrc */
+    GstClockTime restream_pts_offset; /* added to incoming PTS; re-derived when the feed resumes */
+    gboolean restream_offset_valid; /* whether the offset above describes the current feed */
+    gint64 restream_fed_us;    /* when the feed last handed anything over, for the gap detector */
+    gboolean restream_h264;    /* the codec the egress was built for */
+    guint restream_hold_id;    /* the keep-alive timeout, 0 when the egress is down */
     gint watch_last_sink;      /* the two counts the stall watchdog compared last time, */
     gint watch_last_frames;    /* -1 when it has nothing to compare against yet */
     gint watch_reported_congested; /* the backlog state the watchdog last reported */
@@ -235,6 +243,7 @@ static void notify_log(CustomData *data, const char *msg)
 
 static gboolean restream_start(gpointer user_data);
 static void restream_stop(CustomData *data, gboolean retry);
+static void restream_detach_feed(CustomData *data);
 static void restream_cancel_retry(CustomData *data);
 
 /* bus callbacks (run on the loop thread) */
@@ -365,11 +374,16 @@ static void teardown_pipeline(CustomData *data)
         data->video_sink = NULL;
     }
 
-    /* The egress feeds off a probe on this pipeline's tee, so it goes down first and without
-     * scheduling a retry: restream_armed survives, and the next build starts it again once
-     * there is a tee to feed from. */
-    restream_stop(data, FALSE);
-    restream_cancel_retry(data);
+    /* The egress is a pipeline of its own, and only the feed probe belongs to the one going
+     * away, so an armed broadcast rides a rebuild out rather than ending with it. That is what
+     * lets the audio track hold the RTMP session open across a battery swap; the hold frames
+     * keep the video track advancing for the same reason. The next build re-attaches the feed. */
+    if (data->restream_armed && data->restream_pipeline != NULL) {
+        restream_detach_feed(data);
+    } else {
+        restream_stop(data, FALSE);
+        restream_cancel_retry(data);
+    }
 
     /* owned by the pipeline, which is about to be unreffed; drop the borrowed handle */
     data->downstream = NULL;
@@ -539,6 +553,12 @@ static void pad_added_cb(GstElement *src, GstPad *pad, CustomData *data)
  * once per access unit. */
 #define RESTREAM_FEED_HIGH_BYTES (RESTREAM_QUEUE_BYTES / 2)
 #define RESTREAM_FEED_LOW_BYTES (RESTREAM_QUEUE_BYTES / 8)
+/* How often a gap re-sends the last key access unit, and how quiet the feed must be before that
+ * starts. One frame a second is enough to keep the video track advancing, which is what an
+ * ingest measures the session by; the threshold sits above a single late access unit so an
+ * ordinary jitter does not inject one. */
+#define RESTREAM_HOLD_MS 1000
+#define RESTREAM_GAP_US (1500 * 1000)
 
 static void restream_cancel_retry(CustomData *data)
 {
@@ -604,6 +624,120 @@ static guint restream_backlog(CustomData *data)
     return level;
 }
 
+/* Hand one access unit to the egress, timestamped onto the egress's own timeline.
+ *
+ * The offset exists because the two pipelines no longer share a base time. A rebuilt player
+ * starts its timestamps over while the egress has been running underneath it and its audio track
+ * has not, so the raw values would put the video as far behind the sound as the outage was long.
+ * It is re-derived on the first access unit after every resume, against the egress's running
+ * time, which is the same clock the audio is being stamped from.
+ *
+ * `is_key` buffers are kept: a gap re-sends the last one to hold the session open. Runs on the
+ * player's streaming thread and on the loop thread, hence the lock.
+ */
+static void restream_push(CustomData *data, GstBuffer *buffer, gboolean is_key,
+                          gboolean from_feed)
+{
+    g_mutex_lock(&data->restream_feed_lock);
+    if (data->restream_src == NULL) {
+        g_mutex_unlock(&data->restream_feed_lock);
+        return;
+    }
+
+    GstClockTime pts = GST_BUFFER_PTS(buffer);
+
+    /* Where the resumed feed picks the timeline up. The hold frames advanced it in real time
+     * while the feed was away, so continuing from it puts the video back beside the audio; the
+     * first feed of a session has nothing to continue from and needs no offset, which is what
+     * two pipelines sharing a base time already gives.
+     *
+     * Derived from the timeline rather than from the pipeline clock because a rebuild re-attaches
+     * the feed before the egress reports a running time, and an offset of zero taken then would
+     * leave every access unit behind the timeline and spaced a millisecond apart by the clamp
+     * below. */
+    if (from_feed && !data->restream_offset_valid && GST_CLOCK_TIME_IS_VALID(pts)) {
+        data->restream_pts_offset =
+            (GST_CLOCK_TIME_IS_VALID(data->restream_out_pts) &&
+             data->restream_out_pts + GST_MSECOND > pts)
+                ? data->restream_out_pts + GST_MSECOND - pts
+                : 0;
+        data->restream_offset_valid = TRUE;
+    }
+
+    GstClockTime out;
+    if (from_feed && GST_CLOCK_TIME_IS_VALID(pts)) {
+        out = pts + data->restream_pts_offset;
+    } else {
+        /* A hold frame is a copy of an access unit already sent, so the timestamp it carries is
+         * the one it went out under. It is stamped where the egress has actually reached
+         * instead, which is what keeps the video track advancing in step with the audio track
+         * beside it. */
+        GstClockTime now = gst_element_get_current_running_time(data->restream_pipeline);
+        if (GST_CLOCK_TIME_IS_VALID(now)) {
+            out = now;
+        } else if (GST_CLOCK_TIME_IS_VALID(data->restream_out_pts)) {
+            out = data->restream_out_pts + RESTREAM_HOLD_MS * GST_MSECOND;
+        } else {
+            out = 0;
+        }
+    }
+
+    /* A muxer needs its timestamps to keep going forwards, and a resumed feed can hand over an
+     * access unit older than a hold frame already sent. */
+    if (GST_CLOCK_TIME_IS_VALID(data->restream_out_pts) && out <= data->restream_out_pts) {
+        out = data->restream_out_pts + GST_MSECOND;
+    }
+
+    /* Both encoders in use are configured for low delay, so the stream carries no B-frames:
+     * decode order is presentation order and one timestamp serves both. */
+    GstBuffer *copy = gst_buffer_copy(buffer);
+    GST_BUFFER_PTS(copy) = out;
+    GST_BUFFER_DTS(copy) = out;
+    data->restream_out_pts = out;
+    if (from_feed) {
+        /* Only the feed marks the timeline alive. A hold frame counting as one would push the
+         * next hold out by the gap threshold and halve the rate they go out at. */
+        data->restream_fed_us = g_get_monotonic_time();
+    }
+
+    if (is_key) {
+        gst_buffer_replace(&data->restream_last_key, buffer);
+    }
+
+    gst_app_src_push_buffer(GST_APP_SRC(data->restream_src), copy);
+    g_mutex_unlock(&data->restream_feed_lock);
+}
+
+/* Re-send the last key access unit while the feed is quiet, so the video track keeps advancing
+ * through a battery swap instead of stopping dead for the length of one.
+ *
+ * Re-sending a key frame breaks the reference chain the goggle is still building against, so the
+ * feed is put back behind its key-frame gate: whatever arrives next is dropped until the goggle's
+ * own next one, which with GOP 60 is inside a second. Runs on the loop thread.
+ */
+static gboolean restream_hold_cb(gpointer user_data)
+{
+    CustomData *data = (CustomData *) user_data;
+
+    if (data->restream_pipeline == NULL ||
+        g_get_monotonic_time() - data->restream_fed_us < RESTREAM_GAP_US) {
+        return G_SOURCE_CONTINUE;
+    }
+
+    g_mutex_lock(&data->restream_feed_lock);
+    GstBuffer *held = data->restream_last_key ? gst_buffer_ref(data->restream_last_key) : NULL;
+    g_mutex_unlock(&data->restream_feed_lock);
+    if (held == NULL) {
+        /* nothing has been carried yet, so there is no picture to hold */
+        return G_SOURCE_CONTINUE;
+    }
+
+    restream_push(data, held, FALSE, FALSE);
+    gst_buffer_unref(held);
+    g_atomic_int_set(&data->restream_needs_key, 1);
+    return G_SOURCE_CONTINUE;
+}
+
 /* Copy each access unit the tee is about to carry into the egress pipeline.
  *
  * Runs on the player's streaming thread, so what it must not do is block or report failure: the
@@ -654,7 +788,8 @@ static GstPadProbeReturn restream_feed_cb(GstPad *pad, GstPadProbeInfo *info, gp
         return GST_PAD_PROBE_OK;
     }
 
-    gst_app_src_push_buffer(GST_APP_SRC(data->restream_src), gst_buffer_ref(buffer));
+    restream_push(data, buffer, !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT),
+                  TRUE);
     return GST_PAD_PROBE_OK;
 }
 
@@ -713,9 +848,9 @@ static void restream_error_cb(GstBus *bus, GstMessage *msg, CustomData *data)
  * `retry` says whether the destination should be tried again, which is what an egress that went
  * down on its own wants and a teardown of the player underneath it does not.
  */
-static void restream_stop(CustomData *data, gboolean retry)
+static void restream_detach_feed(CustomData *data)
 {
-    /* First, so nothing is writing into the appsrc by the time it is released. This blocks
+    /* Probe first, so nothing is writing into the appsrc by the time the pad goes. This blocks
      * until a callback already running has returned. */
     if (data->restream_feed_probe != 0) {
         gst_pad_remove_probe(data->restream_feed_pad, data->restream_feed_probe);
@@ -726,7 +861,34 @@ static void restream_stop(CustomData *data, gboolean retry)
         data->restream_feed_pad = NULL;
     }
 
-    data->restream_src = NULL;
+    /* The next feed re-derives the offset against whatever timeline it arrives on, and starts
+     * at a key frame because the one it left off at belongs to a decode chain that is gone. */
+    g_mutex_lock(&data->restream_feed_lock);
+    data->restream_offset_valid = FALSE;
+    g_mutex_unlock(&data->restream_feed_lock);
+    g_atomic_int_set(&data->restream_needs_key, 1);
+}
+
+static void restream_stop(CustomData *data, gboolean retry)
+{
+    restream_detach_feed(data);
+
+    if (data->restream_hold_id != 0) {
+        GSource *hold = g_main_context_find_source_by_id(data->context, data->restream_hold_id);
+        if (hold != NULL) {
+            g_source_destroy(hold);
+        }
+        data->restream_hold_id = 0;
+    }
+
+    g_mutex_lock(&data->restream_feed_lock);
+    if (data->restream_src != NULL) {
+        gst_object_unref(data->restream_src);
+        data->restream_src = NULL;
+    }
+    gst_buffer_replace(&data->restream_last_key, NULL);
+    data->restream_out_pts = GST_CLOCK_TIME_NONE;
+    g_mutex_unlock(&data->restream_feed_lock);
 
     if (data->restream_queue != NULL) {
         gst_object_unref(data->restream_queue);
@@ -838,9 +1000,16 @@ static gboolean restream_start(gpointer user_data)
 {
     CustomData *data = (CustomData *) user_data;
 
-    if (data->restream_pipeline != NULL || data->pipeline == NULL || data->downstream == NULL ||
-        data->rtmp_url == NULL) {
+    if (data->pipeline == NULL || data->downstream == NULL || data->rtmp_url == NULL) {
         return G_SOURCE_REMOVE;
+    }
+
+    /* An egress that survived a rebuild is carrying a codec, and the parser and caps it was
+     * built around only fit that one. A session that comes back on the other codec has to be
+     * rebuilt, which costs the RTMP session; the same codec keeps it. */
+    if (data->restream_pipeline != NULL && data->restream_h264 != data->codec_is_h264) {
+        notify_log(data, "restream rebuilding: the stream changed codec");
+        restream_stop(data, FALSE);
     }
 
     /* The tee's sink pad carries every access unit the picture is decoded from, which is exactly
@@ -857,6 +1026,22 @@ static gboolean restream_start(gpointer user_data)
             gst_object_unref(feed_pad);
         }
         restream_schedule_retry(data);
+        return G_SOURCE_REMOVE;
+    }
+
+    /* The egress outlived the player under it, so there is a live RTMP session to feed and only
+     * the probe to put back. */
+    if (data->restream_pipeline != NULL) {
+        if (data->restream_feed_probe == 0) {
+            gst_app_src_set_caps(GST_APP_SRC(data->restream_src), caps);
+            data->restream_feed_pad = feed_pad;
+            data->restream_feed_probe = gst_pad_add_probe(feed_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                                                          restream_feed_cb, data, NULL);
+            notify_log(data, "restream re-attached to the new pipeline");
+        } else {
+            gst_object_unref(feed_pad);
+        }
+        gst_caps_unref(caps);
         return G_SOURCE_REMOVE;
     }
 
@@ -959,6 +1144,10 @@ static gboolean restream_start(gpointer user_data)
     data->restream_queue = queue;
     data->restream_feed_pad = feed_pad;
     data->restream_started_us = g_get_monotonic_time();
+    data->restream_fed_us = g_get_monotonic_time();
+    data->restream_h264 = data->codec_is_h264;
+    data->restream_out_pts = GST_CLOCK_TIME_NONE;
+    data->restream_offset_valid = FALSE;
     g_atomic_int_set(&data->restream_needs_key, 1);
     g_atomic_int_set(&data->restream_dropped, 0);
     g_atomic_int_set(&data->restream_congested, 0);
@@ -966,6 +1155,13 @@ static gboolean restream_start(gpointer user_data)
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
     data->restream_feed_probe = gst_pad_add_probe(feed_pad, GST_PAD_PROBE_TYPE_BUFFER,
                                                  restream_feed_cb, data, NULL);
+
+    /* Lives as long as the egress does, because holding a gap open is only meaningful while
+     * there is a session to hold. */
+    GSource *hold = g_timeout_source_new(RESTREAM_HOLD_MS);
+    g_source_set_callback(hold, restream_hold_cb, data, NULL);
+    data->restream_hold_id = g_source_attach(hold, data->context);
+    g_source_unref(hold);
 
     if (!data->restream_reported_down) {
         notify_log(data, "restream started");
@@ -1047,6 +1243,10 @@ static void *app_function(void *userdata)
     g_main_loop_run(data->main_loop);
     LOGI("gst main loop exiting");
 
+    /* Before the teardown below, which keeps an armed egress alive on purpose. There is no loop
+     * left to drive one here. */
+    restream_cancel_retry(data);
+    restream_stop(data, FALSE);
     teardown_pipeline(data);
     g_main_context_pop_thread_default(data->context);
 
@@ -1059,6 +1259,8 @@ static void gst_native_init(JNIEnv *env, jobject thiz)
     CustomData *data = g_new0(CustomData, 1);
     (*env)->SetLongField(env, thiz, custom_data_field_id, (jlong) (gsize) data);
     data->app = (*env)->NewGlobalRef(env, thiz);
+    g_mutex_init(&data->restream_feed_lock);
+    data->restream_out_pts = GST_CLOCK_TIME_NONE;
     data->context = g_main_context_new();
     data->main_loop = g_main_loop_new(data->context, FALSE);
     /* the handle lives in CustomData, not a file-scope global: a second player would
@@ -1093,6 +1295,7 @@ static void gst_native_finalize(JNIEnv *env, jobject thiz)
     }
 
     (*env)->DeleteGlobalRef(env, data->app);
+    g_mutex_clear(&data->restream_feed_lock);
     g_free(data->uri);
     g_free(data->rtmp_url);
     g_free(data);

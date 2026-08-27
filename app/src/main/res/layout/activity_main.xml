@@ -112,6 +112,23 @@
             tools:text="Streaming"
             tools:visibility="visible" />
 
+        <!-- Sits over a picture the decoder is holding because the feed stopped while the
+             session stayed open. Centred, because the picture behind it is frozen and a chip in
+             a corner reads as a still shot rather than a stopped one. -->
+        <TextView
+            android:id="@+id/feed_notice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_scrim_pill"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="10dp"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="@android:color/white"
+            android:visibility="gone"
+            tools:text="No video from the air unit"
+            tools:visibility="visible" />
+
         <!-- revealed by the same tap as the back control; arms and disarms the restream, so a
              session can be previewed before anything is broadcast -->
         <ImageButton

@@ -279,13 +279,91 @@ class ConnectionMachineTest {
     }
 
     @Test
-    fun eightSecondsOfFrozenVideoReconnects() {
+    fun twoSecondsOfFrozenVideoHoldsThePictureWhileTheSessionIsOpen() {
+        // a battery swap: the goggle is still serving, so there is nothing to reconnect to and
+        // rebuilding would throw away a working session and the frame on screen with it
         autoConnect()
         tick(1000, frames = 5)
-        assertEquals(State.PLAYING, tick(9000, frames = 5).state)
-        val step = tick(9001, frames = 5)
+        assertEquals(State.PLAYING, tick(3000, frames = 5).state)
+        val step = tick(3001, frames = 5)
+        assertEquals(State.FEED_LOST, step.state)
+        assertFalse(step.effects.contains(Effect.StartStream))
+    }
+
+    @Test
+    fun aBlipShorterThanTheThresholdSaysNothing() {
+        // the RF link resets Tx-side for a moment routinely, and the picture catches up on its own
+        autoConnect()
+        tick(1000, frames = 5)
+        assertEquals(State.PLAYING, tick(2500, frames = 5).state)
+        assertEquals(State.PLAYING, tick(3000, frames = 6).state)
+    }
+
+    @Test
+    fun eightSecondsOfFrozenVideoReconnectsOnceTheSessionHasGone() {
+        autoConnect()
+        tick(1000, frames = 5)
+        machine.onSessionProbeResult(portOpen = false, frameCount = 5, nowMs = 2000)
+        // the probe answer put it in STREAM_DOWN, so drive a fresh session that then loses its port
+        autoConnect()
+        tick(3000, frames = 5)
+        machine.onSessionProbeResult(portOpen = false, frameCount = 0, nowMs = 3500)
+        assertEquals(State.STREAM_DOWN, machine.state)
+    }
+
+    @Test
+    fun aResumedFeedReturnsToPlayingWithoutRebuilding() {
+        autoConnect()
+        tick(1000, frames = 5)
+        assertEquals(State.FEED_LOST, tick(9001, frames = 5).state)
+
+        val step = tick(12000, frames = 6)
+        assertEquals(State.PLAYING, step.state)
+        assertFalse(step.effects.contains(Effect.StartStream))
+    }
+
+    @Test
+    fun aLostFeedRechecksThatTheSessionIsStillThere() {
+        autoConnect()
+        tick(1000, frames = 5)
+        tick(9001, frames = 5)
+        assertTrue(tick(20000, frames = 5).effects.contains(Effect.SessionProbe))
+    }
+
+    @Test
+    fun aSessionThatAnswersOnThePortButNeverResumesIsRebuiltEventually() {
+        autoConnect()
+        tick(1000, frames = 5)
+        tick(9001, frames = 5)
+        assertEquals(State.FEED_LOST, tick(60000, frames = 5).state)
+
+        val step = tick(69002, frames = 5)
         assertEquals(State.RECONNECTING, step.state)
         assertTrue(step.effects.contains(Effect.StartStream))
+    }
+
+    @Test
+    fun aLostGoggleKeepsThePlayerWhileBroadcasting() {
+        // releasing the player takes the egress pipeline with it, and the broadcast is the one
+        // thing still worth holding open once the picture has gone
+        autoConnect()
+        tick(1000, frames = 5, isRestreaming = true)
+        val step = tick(2000, hasNetwork = false, isRestreaming = true)
+        assertEquals(State.SEARCHING, step.state)
+        assertFalse(step.effects.contains(Effect.TeardownPlayer))
+    }
+
+    @Test
+    fun aClosedPortKeepsThePlayerWhileBroadcasting() {
+        autoConnect()
+        tick(1000, frames = 5, isRestreaming = true)
+        // a closed port is only believed once the feed has already stopped: the probe takes up
+        // to its timeout, so from PLAYING it says nothing that the frame count does not
+        assertEquals(State.FEED_LOST, tick(9001, frames = 5, isRestreaming = true).state)
+
+        val step = machine.onSessionProbeResult(portOpen = false, frameCount = 5, nowMs = 10000)
+        assertEquals(State.STREAM_DOWN, step.state)
+        assertFalse(step.effects.contains(Effect.TeardownPlayer))
     }
 
     @Test
@@ -303,15 +381,14 @@ class ConnectionMachineTest {
         autoConnect()
         tick(1000, frames = 5)
         val step = tick(60000, frames = 5, foreground = false, isRestreaming = true)
-        assertEquals(State.RECONNECTING, step.state)
-        assertTrue(step.effects.contains(Effect.StartStream))
+        assertEquals(State.FEED_LOST, step.state)
     }
 
     @Test
     fun reconnectingPromotesBackToPlayingOnNewFrames() {
         autoConnect()
         tick(1000, frames = 5)
-        // stalls into RECONNECTING
+        // stalls into FEED_LOST
         tick(9001, frames = 5)
         assertEquals(State.PLAYING, tick(10000, frames = 6).state)
     }
@@ -405,7 +482,8 @@ class ConnectionMachineTest {
         // SESSION_STATES gates the back handler and the session probe; it must stay in step
         // with the states reached after CreatePlayer
         assertEquals(
-            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING),
+            setOf(State.CONNECTING, State.NO_AIR_UNIT, State.PLAYING, State.RECONNECTING,
+                  State.FEED_LOST),
             ConnectionMachine.SESSION_STATES,
         )
     }

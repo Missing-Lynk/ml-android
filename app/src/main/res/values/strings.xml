@@ -68,6 +68,7 @@
     <string name="destination_needs_url">A destination needs an rtmp:// or rtmps:// URL</string>
     <string name="destination_more">More actions for %1$s</string>
     <string name="destination_select">Stream to %1$s</string>
+    <string name="notice_feed_lost">No video from the air unit</string>
     <string name="stream_start">Start streaming</string>
     <string name="stream_stop">Stop streaming</string>
     <string name="stream_needs_destination">Set a streaming destination in Settings first</string>

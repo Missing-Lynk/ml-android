@@ -2,6 +2,7 @@ package at.websium.ml
 
 import at.websium.ml.ConnectionMachine.State
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -181,13 +182,29 @@ class ScreenTest {
         val immersive = State.entries
             .filter { state -> screenFor(state).chrome == Chrome.IMMERSIVE }
             .toSet()
-        assertEquals(setOf(State.PLAYING, State.RECONNECTING), immersive)
+        assertEquals(setOf(State.PLAYING, State.RECONNECTING, State.FEED_LOST), immersive)
     }
 
     @Test
-    fun theStatusPanelIsHiddenOnlyWhilePlaying() {
+    fun theStatusPanelIsHiddenOnlyWhereThereIsAPictureBehindIt() {
+        // FEED_LOST included: the panel would cover the frame the decoder is still holding, which
+        // is the whole of what that state has to show
         val panelless = State.entries.filter { state -> screenFor(state).status == null }.toSet()
-        assertEquals(setOf(State.PLAYING), panelless)
+        assertEquals(setOf(State.PLAYING, State.FEED_LOST), panelless)
+    }
+
+    @Test
+    fun onlyALostFeedCarriesANotice() {
+        val noticed = State.entries.filter { state -> screenFor(state).controls.notice != null }
+        assertEquals(listOf(State.FEED_LOST), noticed)
+    }
+
+    @Test
+    fun theNoticeShowsWithTheControlsHidden() {
+        // it is tied to the state rather than to a tap, like the badge and unlike the controls
+        val controls = screenFor(State.FEED_LOST, areControlsRevealed = false).controls
+        assertEquals(Notice(R.string.notice_feed_lost), controls.notice)
+        assertFalse(controls.isBackVisible)
     }
 
     // the controls over the video
@@ -230,12 +247,12 @@ class ScreenTest {
         val revealed = ConnectionMachine.State.entries.filter { state ->
             screenFor(state, areControlsRevealed = true).controls.isBackVisible
         }.toSet()
-        assertEquals(setOf(State.PLAYING, State.RECONNECTING), revealed)
+        assertEquals(setOf(State.PLAYING, State.RECONNECTING, State.FEED_LOST), revealed)
 
         val toggled = ConnectionMachine.State.entries.filter { state ->
             screenFor(state, areControlsRevealed = true).controls.toggle != null
         }.toSet()
-        assertEquals(setOf(State.PLAYING, State.RECONNECTING), toggled)
+        assertEquals(setOf(State.PLAYING, State.RECONNECTING, State.FEED_LOST), toggled)
     }
 
     @Test
