@@ -46,6 +46,7 @@
     <string name="pref_rtmp_note">Paste the full ingest URL with your stream key on the end, for example rtmp://live.twitch.tv/app/YOUR-KEY. Add ?bandwidthtest=true to test against Twitch Inspector without going live. The key is hidden once saved and is kept out of the diagnostics log.</string>
     <string name="pref_rtmp_unset">Not set</string>
     <string name="pref_destinations_key" translatable="false">destinations</string>
+    <string name="pref_destinations_secret_key" translatable="false">destinations_secret</string>
     <string name="pref_audio_key" translatable="false">audio_source</string>
     <string name="pref_audio_title">Audio</string>
     <string name="pref_audio_note">The broadcast always carries an audio track: it is what keeps the connection open while the video drops, which happens on every battery swap. Silence is a generated track. Microphone picks up the room, including anything playing on a speaker.</string>
