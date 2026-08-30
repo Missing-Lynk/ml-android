@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.media.MediaFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -33,6 +35,7 @@ import androidx.preference.PreferenceManager
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
+import java.util.concurrent.Executors
 
 /**
  * Hosts the video and renders whatever state the two machines are in. [ConnectionMachine] decides
@@ -61,11 +64,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var streamBadge: TextView
     private lateinit var feedNotice: TextView
     private lateinit var streamCodec: TextView
+    private lateinit var placeholderView: ImageView
 
     private var player: StreamPlayer? = null
     private var lastPlayerFailure: String? = null
     private lateinit var link: GoggleLink
     private lateinit var destinations: DestinationStore
+
+    /** drawn once and used twice: scaled into the video area, and encoded for the broadcast */
+    private var placeholderBitmap: Bitmap? = null
+
+    /** the encoded placeholder per codec, so the reconnects a flight is full of do not re-encode */
+    private val placeholderUnits = mutableMapOf<String, ByteArray>()
+
+    /**
+     * Where the encode runs. Off the pipeline's streaming thread, which is the one carrying the
+     * picture, and single so two rebuilds in quick succession queue rather than race.
+     */
+    private val placeholderEncoder = Executors.newSingleThreadExecutor()
 
     private val machine = ConnectionMachine()
     private val restream = RestreamMachine()
@@ -126,6 +142,8 @@ class MainActivity : AppCompatActivity() {
         streamBadge = findViewById(R.id.stream_badge)
         feedNotice = findViewById(R.id.feed_notice)
         streamCodec = findViewById(R.id.stream_codec)
+        placeholderView = findViewById(R.id.placeholder)
+        placeholderView.setImageBitmap(placeholderImage())
 
         setSupportActionBar(toolbar)
 
@@ -210,6 +228,7 @@ class MainActivity : AppCompatActivity() {
         applyRestream(restream.onShutdown())
         teardownPlayer()
         link.shutdown()
+        placeholderEncoder.shutdown()
     }
 
     // driving the machines
@@ -222,7 +241,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun step() {
         val network = link.goggleNetwork()
-        link.bindTo(network)
+        /*
+         * Only the release half runs here. The routing is taken for the window in which the
+         * player opens its sockets (StartStream below, released when the codec is reported) and
+         * left off the rest of the time, so a restream's destination can be resolved and reached
+         * over the phone's own network. A goggle that has gone takes the routing with it.
+         */
+        if (network == null) {
+            link.bindTo(null)
+        }
         apply(
             machine.onTick(
                 ConnectionMachine.Tick(
@@ -265,6 +292,13 @@ class MainActivity : AppCompatActivity() {
                     teardownPlayer()
                 }
                 ConnectionMachine.Effect.StartStream -> {
+                    /*
+                     * Opens the routing window. play() only queues the rebuild, so the sockets
+                     * are made later on the player's own thread and the routing has to stay on
+                     * until it reports the codec, which it does once rtspsrc has described and
+                     * set up the stream and therefore has them all.
+                     */
+                    link.bindTo(link.goggleNetwork())
                     link.endpoint()?.let { target -> player?.play(target.url) }
                 }
                 ConnectionMachine.Effect.Probe -> {
@@ -348,7 +382,17 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { machine.onPlayerEvent(event) }
             }
             created.onCodec = { codec ->
+                /*
+                 * The player has its sockets, so the routing window closes and the process
+                 * returns to its own network; the sockets already open keep the goggle. Closed on
+                 * the calling thread rather than posted to the UI one, because the same native
+                 * callback goes on to queue the egress, and an egress that connects while the
+                 * process is still routed over the goggle resolves its destination against an
+                 * interface that carries no DNS.
+                 */
+                link.bindTo(null)
                 runOnUiThread { applyRestream(restream.onCodecNegotiated(codec)) }
+                supplyPlaceholder(created, codec)
             }
             created.onRestreamFailed = { reason ->
                 runOnUiThread { applyRestream(restream.onEgressFailed(reason)) }
@@ -459,6 +503,8 @@ class MainActivity : AppCompatActivity() {
             feedNotice.text = getString(notice.textResource)
         }
 
+        placeholderView.visibility = visibilityOf(controls.isPlaceholderVisible)
+
         val codec = controls.codec
         streamCodec.visibility = visibilityOf(codec != null)
         if (codec != null) {
@@ -479,6 +525,51 @@ class MainActivity : AppCompatActivity() {
 
         setSystemBarsVisible(!immersive)
         leaveSession.isEnabled = screen.isInSession
+    }
+
+    /**
+     * The placeholder image, drawn on first use. One bitmap serves the view and the encoder, so
+     * what the pilot sees over a lost feed is what the broadcast is sending its viewers.
+     */
+    private fun placeholderImage(): Bitmap {
+        val existing = placeholderBitmap
+        if (existing != null) {
+            return existing
+        }
+        val created = Placeholder.render(this)
+        placeholderBitmap = created
+        return created
+    }
+
+    /**
+     * Encode the placeholder for [codec] and give it to [target].
+     *
+     * A codec this app does not know is left without one, which leaves the broadcast holding the
+     * goggle's last key frame through a gap as it did before.
+     *
+     * The encode runs on the executor and the result is applied back on the main thread, against
+     * the player that is current then. That is the thread [teardownPlayer] runs on, so an encode
+     * still in flight when a player is released cannot reach the native side it has freed.
+     */
+    private fun supplyPlaceholder(target: StreamPlayer, codec: String) {
+        val mimeType = when {
+            codec.equals("H264", ignoreCase = true) -> MediaFormat.MIMETYPE_VIDEO_AVC
+            codec.equals("H265", ignoreCase = true) -> MediaFormat.MIMETYPE_VIDEO_HEVC
+            else -> return
+        }
+        val image = placeholderImage()
+        placeholderEncoder.execute {
+            val cached = placeholderUnits[mimeType]
+            val unit = cached ?: Placeholder.encode(image, mimeType) ?: return@execute
+            if (cached == null) {
+                placeholderUnits[mimeType] = unit
+            }
+            runOnUiThread {
+                if (!isDestroyed && player === target) {
+                    target.setPlaceholder(unit)
+                }
+            }
+        }
     }
 
     private fun visibilityOf(visible: Boolean): Int {

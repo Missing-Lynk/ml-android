@@ -138,6 +138,8 @@ class GoggleLink(context: Context) {
         Collections.newSetFromMap(ConcurrentHashMap<Network, Boolean>())
 
     /** the network the process is currently routed over, so binding is idempotent */
+    /** written from the UI thread and from the player's own thread when the window closes */
+    @Volatile
     private var boundNetwork: Network? = null
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -225,6 +227,16 @@ class GoggleLink(context: Context) {
      * Route the process, and so the player's sockets, over the goggle interface; release the
      * routing when [network] is null. Idempotent: repeated calls with the same network do
      * nothing, and a vanished goggle is unbound rather than left bound to a dead network.
+     *
+     * This is held open only while the player is opening its sockets, and released once it has
+     * them. The goggle interface carries no DNS servers and no default route, only its own /24,
+     * so a process routed over it can reach the goggle and nothing else: a restream's destination
+     * resolves and connects only while the process is on its default network. Sockets already
+     * connected keep the route they were made on, which is what makes the window work -- the
+     * player's stay on the goggle after the routing is released.
+     *
+     * The probe binds its own socket ([probeRtsp]) rather than relying on this, since it has to
+     * reach the goggle whether the window is open or not.
      */
     fun bindTo(network: Network?) {
         if (network == boundNetwork) {
@@ -232,9 +244,9 @@ class GoggleLink(context: Context) {
         }
 
         /*
-         * Every socket in the process is routed by this call, so a change here breaks whatever
-         * the player already has open. It is logged because it decides what the program does
-         * next, and because a binding that flaps looks exactly like a failing stream.
+         * Every socket opened after this call is routed by it. It is logged because it decides
+         * what the program does next, and because a binding that flaps looks exactly like a
+         * failing stream.
          */
         Diagnostics.log("link", "routing over ${network ?: "no network"}")
         boundNetwork = network
@@ -244,6 +256,10 @@ class GoggleLink(context: Context) {
     /**
      * Asynchronous TCP probe of the RTSP port. [onResult] is delivered on the main thread, and
      * is skipped entirely while an earlier probe is still running.
+     *
+     * The socket is pinned to the goggle's network rather than taking the process routing, so the
+     * probe answers the same whether or not [bindTo]'s window is open. Without that it would read
+     * a goggle that is present and serving as gone for as long as the process is on WiFi.
      */
     fun probeRtsp(onResult: (Boolean) -> Unit) {
         if (probeInFlight) {
@@ -253,10 +269,12 @@ class GoggleLink(context: Context) {
         if (target == null) {
             return
         }
+        val network = goggleNetwork()
         probeInFlight = true
         probeExecutor.execute {
             val portOpen = try {
                 Socket().use { socket ->
+                    network?.bindSocket(socket)
                     socket.connect(InetSocketAddress(target.host, target.port), PROBE_TIMEOUT_MS)
                     true
                 }

@@ -76,6 +76,16 @@ interface StreamPlayer {
      */
     fun setRestream(url: String?, audio: AudioSource = AudioSource.SILENCE)
 
+    /**
+     * Give the egress the still it carries while no pictures arrive, as one encoded access unit
+     * in the codec the session negotiated. Null leaves it with the goggle's last key frame, which
+     * is what it held before a placeholder existed.
+     *
+     * Set it per codec: an access unit encoded for the other one cannot be pushed into this
+     * stream, so a session that negotiates H.264 after one that negotiated H.265 needs a new one.
+     */
+    fun setPlaceholder(accessUnit: ByteArray?)
+
     /** monotonic count of frames that have reached the sink; 0 means no media is flowing */
     val frameCount: Int
 

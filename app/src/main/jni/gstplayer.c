@@ -7,7 +7,7 @@
  * Pipeline: rtspsrc feeds a tee of encoded access units, built in pad_added_cb once the SDP has
  * named the codec (H.265 by default, H.264 when the goggle's DVR codec setting selects it):
  *
- *   rtspsrc ! rtpXdepay ! Xparse ! tee ! queue ! decodebin ! glimagesink sync=false
+ *   rtspsrc ! rtpXdepay ! Xparse ! byte-stream/au ! tee ! queue ! decodebin ! glimagesink sync=false
  *
  * sync=false renders frames as they arrive, which the goggle's clockless stream needs.
  *
@@ -17,7 +17,10 @@
  *            audiotestsrc(silence) ! voaacenc ! flvmux.
  *
  * A pad probe on the tee's sink pad copies each access unit into that appsrc and drops the push
- * return. The constraint that shape exists to hold: the egress must share no flow-return path
+ * return. While no access units arrive, a 1 s timer pushes a still instead, so the video track
+ * keeps advancing and the ingest keeps the session: the still is a placeholder image Kotlin
+ * encodes for the negotiated codec (Placeholder.kt) and hands down through nativeSetPlaceholder.
+ * The constraint that shape exists to hold: the egress must share no flow-return path
  * and no bus with the leg carrying the picture, because a tee combines its branches' flow
  * returns, and a destination that refuses, times out or dies would otherwise take the picture
  * down with it. The egress forwards the goggle's own encoding, so the phone never re-encodes,
@@ -77,14 +80,17 @@ typedef struct _CustomData
     gint64 restream_started_us; /* when the egress was started, for the backoff reset */
     gboolean restream_reported_down; /* the outage has been logged; cleared once it carries */
     gint restream_sink_count;  /* buffers the egress sink has accepted (g_atomic) */
-    GMutex restream_feed_lock; /* guards the four fields below, written from two threads */
-    GstBuffer *restream_last_key; /* the newest key access unit, re-sent to hold a gap open */
+    GMutex restream_feed_lock; /* guards the five fields below, written from two threads */
+    GstBuffer *restream_last_key; /* the newest key access unit, kept while the feed flows */
+    GstBuffer *restream_placeholder; /* the encoded still a gap carries, or NULL until Kotlin
+                                      * has encoded one for this codec */
     GstClockTime restream_out_pts; /* PTS of the last access unit handed to the appsrc */
     GstClockTime restream_pts_offset; /* added to incoming PTS; re-derived when the feed resumes */
     gboolean restream_offset_valid; /* whether the offset above describes the current feed */
     gint64 restream_fed_us;    /* when the feed last handed anything over, for the gap detector */
     gboolean restream_h264;    /* the codec the egress was built for */
     guint restream_hold_id;    /* the keep-alive timeout, 0 when the egress is down */
+    gboolean restream_holding; /* a gap is being carried; latched so it is logged once */
     gint watch_last_sink;      /* the two counts the stall watchdog compared last time, */
     gint watch_last_frames;    /* -1 when it has nothing to compare against yet */
     gint watch_reported_congested; /* the backlog state the watchdog last reported */
@@ -425,13 +431,23 @@ static GstElement *build_downstream(CustomData *data, gboolean h264)
 {
     const gchar *depay = h264 ? "rtph264depay" : "rtph265depay";
     const gchar *parse = h264 ? "h264parse" : "h265parse";
-    const gchar *media = h264 ? "video/x-h264,stream-format=avc,alignment=au"
-                              : "video/x-h265,stream-format=hvc1,alignment=au";
-    (void) media;
+    const gchar *media = h264 ? "video/x-h264,stream-format=byte-stream,alignment=au"
+                              : "video/x-h265,stream-format=byte-stream,alignment=au";
+
+    /* The tee carries byte-stream access units, which is the framing that lets the egress take
+     * its own picture of the stream: it sets its appsrc to the codec and this framing alone, and
+     * the rest of the description (the resolution, the profile, the codec data the muxer sends
+     * the ingest) is re-derived by the egress's own parser from the access units it is handed. So
+     * a placeholder encoded on the phone can be pushed into the same appsrc as the goggle's own
+     * pictures, and the goggle's next key frame puts the description back.
+     *
+     * The parser is left to carry the parameter sets as they arrive. mlp-rtsp.c leads every IRAP
+     * with its cached set already, so asking for them again here would only hand the decoder a
+     * second copy of a description it has. */
     gchar *desc = g_strdup_printf(
-        "%s name=depay ! %s ! tee name=t "
+        "%s name=depay ! %s ! %s ! tee name=t "
         "t. ! queue ! decodebin ! glimagesink name=vsink sync=false",
-        depay, parse);
+        depay, parse, media);
 
     GError *error = NULL;
     GstElement *bin = gst_parse_bin_from_description(desc, FALSE, &error);
@@ -509,6 +525,13 @@ static void pad_added_cb(GstElement *src, GstPad *pad, CustomData *data)
     gchar *line = g_strdup_printf("stream codec: %s", h264 ? "H.264" : "H.265");
     notify_log(data, line);
     g_free(line);
+    if (data->codec_is_h264 != h264) {
+        /* the placeholder was encoded for the other codec and cannot be pushed into this
+         * stream; notify_codec below is what asks Kotlin for one that fits */
+        g_mutex_lock(&data->restream_feed_lock);
+        gst_buffer_replace(&data->restream_placeholder, NULL);
+        g_mutex_unlock(&data->restream_feed_lock);
+    }
     data->codec_is_h264 = h264;
     notify_codec(data, h264 ? "H264" : "H265");
     gst_caps_unref(caps);
@@ -649,7 +672,7 @@ static guint restream_backlog(CustomData *data)
  * It is re-derived on the first access unit after every resume, against the egress's running
  * time, which is the same clock the audio is being stamped from.
  *
- * `is_key` buffers are kept: a gap re-sends the last one to hold the session open. Runs on the
+ * `is_key` buffers are kept as the fallback still for a gap, behind the placeholder. Runs on the
  * player's streaming thread and on the loop thread, hence the lock.
  */
 static void restream_push(CustomData *data, GstBuffer *buffer, gboolean is_key,
@@ -725,10 +748,14 @@ static void restream_push(CustomData *data, GstBuffer *buffer, gboolean is_key,
     g_mutex_unlock(&data->restream_feed_lock);
 }
 
-/* Re-send the last key access unit while the feed is quiet, so the video track keeps advancing
- * through a battery swap instead of stopping dead for the length of one.
+/* Send a still while the feed is quiet, so the video track keeps advancing through a battery
+ * swap instead of stopping dead for the length of one.
  *
- * Re-sending a key frame breaks the reference chain the goggle is still building against, so the
+ * The still is the placeholder Kotlin encoded for this codec, which is what a viewer should see
+ * when there is no picture to send. The goggle's last key access unit is the fallback for the
+ * window before the encode lands, and for a device whose encoder would not produce one.
+ *
+ * Either way the still breaks the reference chain the goggle is still building against, so the
  * feed is put back behind its key-frame gate: whatever arrives next is dropped until the goggle's
  * own next one, which with GOP 60 is inside a second. Runs on the loop thread.
  */
@@ -736,21 +763,39 @@ static gboolean restream_hold_cb(gpointer user_data)
 {
     CustomData *data = (CustomData *) user_data;
 
-    if (data->restream_pipeline == NULL ||
-        g_get_monotonic_time() - data->restream_fed_us < RESTREAM_GAP_US) {
+    if (data->restream_pipeline == NULL) {
+        return G_SOURCE_CONTINUE;
+    }
+
+    if (g_get_monotonic_time() - data->restream_fed_us < RESTREAM_GAP_US) {
+        if (data->restream_holding) {
+            data->restream_holding = FALSE;
+            notify_log(data, "restream carrying the goggle's picture again");
+        }
         return G_SOURCE_CONTINUE;
     }
 
     g_mutex_lock(&data->restream_feed_lock);
-    GstBuffer *held = data->restream_last_key ? gst_buffer_ref(data->restream_last_key) : NULL;
+    GstBuffer *still = data->restream_placeholder != NULL ? data->restream_placeholder
+                                                          : data->restream_last_key;
+    gboolean is_placeholder = (data->restream_placeholder != NULL);
+    if (still != NULL) {
+        gst_buffer_ref(still);
+    }
     g_mutex_unlock(&data->restream_feed_lock);
-    if (held == NULL) {
-        /* nothing has been carried yet, so there is no picture to hold */
+    if (still == NULL) {
+        /* no placeholder yet and nothing carried yet, so there is nothing to send */
         return G_SOURCE_CONTINUE;
     }
 
-    restream_push(data, held, FALSE, FALSE);
-    gst_buffer_unref(held);
+    if (!data->restream_holding) {
+        data->restream_holding = TRUE;
+        notify_log(data, is_placeholder ? "no picture from the goggle; carrying the placeholder"
+                                        : "no picture from the goggle; holding the last frame");
+    }
+
+    restream_push(data, still, FALSE, FALSE);
+    gst_buffer_unref(still);
     g_atomic_int_set(&data->restream_needs_key, 1);
     return G_SOURCE_CONTINUE;
 }
@@ -904,9 +949,12 @@ static void restream_stop(CustomData *data, gboolean retry)
         gst_object_unref(data->restream_src);
         data->restream_src = NULL;
     }
+    /* The last key frame belongs to a decode chain that is going away. The placeholder does not:
+     * it belongs to the codec, so it survives a reconnect and is ready for the next gap. */
     gst_buffer_replace(&data->restream_last_key, NULL);
     data->restream_out_pts = GST_CLOCK_TIME_NONE;
     g_mutex_unlock(&data->restream_feed_lock);
+    data->restream_holding = FALSE;
 
     if (data->restream_queue != NULL) {
         gst_object_unref(data->restream_queue);
@@ -1081,18 +1129,48 @@ static gboolean restream_start(gpointer user_data)
      * what the destination should receive. */
     GstElement *tee = gst_bin_get_by_name(GST_BIN(data->downstream), "t");
     GstPad *feed_pad = tee ? gst_element_get_static_pad(tee, "sink") : NULL;
-    GstCaps *caps = feed_pad ? gst_pad_get_current_caps(feed_pad) : NULL;
     if (tee != NULL) {
         gst_object_unref(tee);
     }
-    if (feed_pad == NULL || caps == NULL) {
-        /* nothing has negotiated yet; the retry catches it once the stream is running */
-        if (feed_pad != NULL) {
-            gst_object_unref(feed_pad);
-        }
+    if (feed_pad == NULL) {
+        /* the stream has not been built yet; the retry catches it once it has */
         restream_schedule_retry(data);
         return G_SOURCE_REMOVE;
     }
+
+    /* Something must be ready to send before the destination is dialled. rtmp2sink connects as it
+     * starts, and the muxer emits nothing at all until its video pad has a buffer, so a session
+     * opened with neither a negotiated feed nor a placeholder to fall back on is one the ingest
+     * sees connect and then go silent, which it answers by dropping the connection. Measured: the
+     * muxer wrote zero bytes over twelve seconds with video caps, no video buffers and the audio
+     * track running throughout. */
+    if (data->restream_pipeline == NULL) {
+        GstCaps *feeding = gst_pad_get_current_caps(feed_pad);
+        gboolean has_feed = (feeding != NULL);
+        if (feeding != NULL) {
+            gst_caps_unref(feeding);
+        }
+        g_mutex_lock(&data->restream_feed_lock);
+        gboolean has_placeholder = (data->restream_placeholder != NULL);
+        g_mutex_unlock(&data->restream_feed_lock);
+        if (!has_feed && !has_placeholder) {
+            gst_object_unref(feed_pad);
+            restream_schedule_retry(data);
+            return G_SOURCE_REMOVE;
+        }
+    }
+
+    /* The codec and the framing, and nothing else. The resolution, the profile and the codec data
+     * the muxer hands the ingest all come out of the access units, which build_downstream frames
+     * so that every key frame carries the parameter sets that describe it. Two things follow: the
+     * egress opens against a goggle that has not sent a picture yet, so a broadcast armed with the
+     * air unit off starts on the placeholder rather than waiting; and the placeholder, encoded on
+     * the phone against its own parameter sets, is carried by the same appsrc as the goggle's own
+     * pictures. The muxer re-sends its sequence header when the description changes, so each
+     * switch between the two costs one, which an ingest reads as it would a resolution change. */
+    GstCaps *caps = gst_caps_new_simple(data->codec_is_h264 ? "video/x-h264" : "video/x-h265",
+                                        "stream-format", G_TYPE_STRING, "byte-stream",
+                                        "alignment", G_TYPE_STRING, "au", NULL);
 
     /* The egress outlived the player under it, so there is a live RTMP session to feed and only
      * the probe to put back. */
@@ -1372,6 +1450,7 @@ static void gst_native_finalize(JNIEnv *env, jobject thiz)
     }
 
     (*env)->DeleteGlobalRef(env, data->app);
+    gst_buffer_replace(&data->restream_placeholder, NULL);
     g_mutex_clear(&data->restream_feed_lock);
     g_free(data->uri);
     g_free(data->rtmp_url);
@@ -1419,6 +1498,43 @@ static void gst_native_set_restream(JNIEnv *env, jobject thiz, jstring url, jboo
 
     g_main_context_invoke(data->context,
                           data->restream_armed ? restream_start : restream_stop_cb, data);
+}
+
+/* Take the encoded placeholder access unit from Kotlin, which produced it with the phone's own
+ * encoder for the codec the SDP named. Byte-stream framing with its parameter sets in front of
+ * it, which is what the egress appsrc is set to carry.
+ *
+ * Runs on a Kotlin thread rather than the loop thread, so the buffer goes under the feed lock
+ * that the hold callback reads it through. */
+static void gst_native_set_placeholder(JNIEnv *env, jobject thiz, jbyteArray au)
+{
+    CustomData *data = (CustomData *) (gsize) (*env)->GetLongField(env, thiz, custom_data_field_id);
+    if (data == NULL) {
+        return;
+    }
+
+    GstBuffer *buffer = NULL;
+    if (au != NULL) {
+        jsize length = (*env)->GetArrayLength(env, au);
+        if (length > 0) {
+            buffer = gst_buffer_new_allocate(NULL, (gsize) length, NULL);
+            GstMapInfo map;
+            if (gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
+                (*env)->GetByteArrayRegion(env, au, 0, length, (jbyte *) map.data);
+                gst_buffer_unmap(buffer, &map);
+            } else {
+                gst_buffer_unref(buffer);
+                buffer = NULL;
+            }
+        }
+    }
+
+    g_mutex_lock(&data->restream_feed_lock);
+    gst_buffer_replace(&data->restream_placeholder, buffer);
+    g_mutex_unlock(&data->restream_feed_lock);
+    if (buffer != NULL) {
+        gst_buffer_unref(buffer);
+    }
 }
 
 static void gst_native_play(JNIEnv *env, jobject thiz)
@@ -1512,6 +1628,7 @@ static JNINativeMethod native_methods[] = {
     {"nativeFinalize", "()V", (void *) gst_native_finalize},
     {"nativeSetUri", "(Ljava/lang/String;)V", (void *) gst_native_set_uri},
     {"nativeSetRestream", "(Ljava/lang/String;Z)V", (void *) gst_native_set_restream},
+    {"nativeSetPlaceholder", "([B)V", (void *) gst_native_set_placeholder},
     {"nativePlay", "()V", (void *) gst_native_play},
     {"nativeSurfaceInit", "(Landroid/view/Surface;)V", (void *) gst_native_surface_init},
     {"nativeSurfaceFinalize", "()V", (void *) gst_native_surface_finalize},

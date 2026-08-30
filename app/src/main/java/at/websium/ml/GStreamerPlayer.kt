@@ -69,6 +69,10 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
         nativeSetRestream(url, audio == AudioSource.MICROPHONE)
     }
 
+    override fun setPlaceholder(accessUnit: ByteArray?) {
+        nativeSetPlaceholder(accessUnit)
+    }
+
     override fun release() {
         nativeFinalize()
         surface?.release()
@@ -153,6 +157,7 @@ class GStreamerPlayer(context: Context) : StreamPlayer, TextureView.SurfaceTextu
     private external fun nativeFinalize()
     private external fun nativeSetUri(uri: String)
     private external fun nativeSetRestream(url: String?, useMicrophone: Boolean)
+    private external fun nativeSetPlaceholder(accessUnit: ByteArray?)
     private external fun nativePlay()
     private external fun nativeSurfaceInit(surface: Surface)
     private external fun nativeSurfaceFinalize()

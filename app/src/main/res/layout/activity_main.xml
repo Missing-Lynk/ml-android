@@ -23,6 +23,17 @@
 
         <!-- the player attaches its render view here at runtime (index 0) -->
 
+        <!-- covers the frame the decoder is holding once the feed stops, so a still picture is
+             never mistaken for a live one; the same image the broadcast carries through the gap -->
+        <ImageView
+            android:id="@+id/placeholder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/black"
+            android:contentDescription="@string/placeholder_image"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/status_panel"
             android:layout_width="match_parent"

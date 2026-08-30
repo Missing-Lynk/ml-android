@@ -18,6 +18,8 @@ Leaving a session (back, or the on-video back control) parks the app on a Connec
 
 ## Restreaming
 
+When the air unit stops sending, a "Stay tuned" placeholder covers the frame the decoder is holding, and the broadcast carries the same image to its viewers until the picture comes back.
+
 Tap the video while playing to reveal the controls, and the second one arms a restream: the same encoded video the phone is decoding is pushed to whichever destination is selected in **Settings > Streaming destination**. Destinations are saved with a name, so a "Twitch Inspector" entry for testing and a "Twitch live" entry for flying sit side by side and the toggle stays one tap. Each takes the server URL with the stream key on the end as one pasted string; the key is masked wherever the URL is shown, and everywhere else names the destination instead, including the notification and the diagnostics log.
 
 The restream is a pipeline of its own beside the player, so arming and disarming never interrupt the picture, and an ingest that refuses the stream costs the broadcast rather than the flight view. A badge in the bottom-left names the destination, says whether the broadcast is carrying or between reconnect attempts, and names what its audio track is carrying. It keeps running with the app off screen or the phone locked, and neither a stopped feed nor an unplugged goggle ends it: the broadcast holds its connection open and picks the video back up with the next session, without touching the toggle. Stop in the notification ends it without opening the app.

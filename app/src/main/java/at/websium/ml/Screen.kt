@@ -109,6 +109,13 @@ data class Controls(
     val notice: Notice? = null,
 
     /**
+     * Whether the placeholder covers the video. It goes with the [notice]: the chip says the
+     * picture is not live and this is what is shown instead of the one the decoder is holding,
+     * which is also what the broadcast is carrying to its viewers.
+     */
+    val isPlaceholderVisible: Boolean = false,
+
+    /**
      * What the goggle is sending, ready to draw. It rides with the revealed controls rather than
      * showing always: it is what decides which destinations will take the stream, which is a
      * thing checked before arming rather than watched while flying.
@@ -184,13 +191,11 @@ private fun controlsFor(
     areControlsRevealed: Boolean,
 ): Controls {
     val isShowing = chrome == Chrome.IMMERSIVE && areControlsRevealed
+    val isFeedLost = state == ConnectionMachine.State.FEED_LOST
     return Controls(
         codec = if (isShowing) codecLabel(streamCodec) else null,
-        notice = if (state == ConnectionMachine.State.FEED_LOST) {
-            Notice(R.string.notice_feed_lost)
-        } else {
-            null
-        },
+        notice = if (isFeedLost) Notice(R.string.notice_feed_lost) else null,
+        isPlaceholderVisible = isFeedLost,
         isBackVisible = isShowing,
         toggle = when {
             !isShowing -> null

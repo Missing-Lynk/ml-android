@@ -4,6 +4,7 @@ import at.websium.ml.ConnectionMachine.State
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -246,6 +247,22 @@ class ScreenTest {
     fun onlyALostFeedCarriesANotice() {
         val noticed = State.entries.filter { state -> screenFor(state).controls.notice != null }
         assertEquals(listOf(State.FEED_LOST), noticed)
+    }
+
+    @Test
+    fun onlyALostFeedCoversTheVideoWithThePlaceholder() {
+        val covered = State.entries.filter { state ->
+            screenFor(state).controls.isPlaceholderVisible
+        }
+        assertEquals(listOf(State.FEED_LOST), covered)
+    }
+
+    @Test
+    fun thePlaceholderCoversThePictureTheNoticeIsWrittenOver() {
+        // the two are one statement: the picture is not live, and this is what is shown instead
+        val controls = screenFor(State.FEED_LOST, areControlsRevealed = false).controls
+        assertTrue(controls.isPlaceholderVisible)
+        assertEquals(Notice(R.string.notice_feed_lost), controls.notice)
     }
 
     @Test
